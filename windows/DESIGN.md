@@ -2,7 +2,7 @@
 
 **Status: planning app only.** `openseat/` builds `OpenSeat.exe`, which
 lets the user assign screens, keyboards and mice to workplaces and saves the
-plan to `%APPDATA%\\OpenSeat\\setup.ini`. `seatenum.c` is a small command-line
+plan to `%APPDATA%\OpenSeat\setup.ini`. `seatenum.c` is a small command-line
 version of the device listing. Nothing in this folder creates a seat.
 
 These notes are a starting plan, not a verified design. Items marked
