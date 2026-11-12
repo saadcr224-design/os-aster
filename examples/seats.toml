@@ -1,0 +1,15 @@
+# Example seat plan. Get the real ids for your PC with: openseat list
+# Apply with: sudo openseat apply examples/seats.toml
+
+[seats.seat0]
+devices = [
+    "pci:0000:00:02.0",  # built-in graphics
+    "usb:1-1",           # first keyboard
+    "usb:1-2",           # first mouse
+]
+
+[seats.seat1]
+devices = [
+    "pci:0000:01:00.0",  # second graphics card
+    "hub:1-3",           # USB hub: everything plugged into it follows
+]

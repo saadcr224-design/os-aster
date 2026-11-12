@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "openseat"
+version = "0.1.0"
+description = "Open-source multiseat manager: several users on one PC, each with their own monitor, keyboard and mouse."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+
+[project.scripts]
+openseat = "openseat.cli:main"
+
+[tool.setuptools]
+packages = ["openseat"]
