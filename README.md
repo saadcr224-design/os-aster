@@ -9,7 +9,7 @@ and contains no code from, ASTER or IBIK.
 | Part | Status |
 | --- | --- |
 | **Linux** (`openseat`) | Working command-line tool and graphical interface. Tested against simulated hardware; not yet run on a real multi-GPU PC. |
-| **Windows** (`windows/openseat/`) | `OpenSeat.exe`: plan and save who uses which screen, keyboard and mouse. Tested under Wine, not yet on real Windows. It cannot start the extra workplaces: that needs kernel drivers that are **not written** — see [windows/DESIGN.md](windows/DESIGN.md). |
+| **Windows** (`windows/openseat/`) | `OpenSeat.exe`: sets up and runs extra workplaces. Needs Windows Server and the free Interception driver. Tested under Wine, **not yet on a real Windows PC**. |
 
 ## Linux
 
@@ -145,33 +145,69 @@ python3 -m unittest
 
 ## Windows
 
-`windows/openseat/` is a native Windows program, **OpenSeat.exe**. It shows
-your screens, keyboards and mice, and lets you divide them into workplaces
-(one workplace = one person):
+`windows/openseat/` builds **OpenSeat.exe**, one program that sets up and runs
+several workplaces on one Windows PC. Each person gets their own screen,
+keyboard and mouse, and signs in to their own Windows account.
 
 ![OpenSeat for Windows](docs/windows.png)
 
-1. Press **Add a workplace**.
-2. Click a screen, a keyboard and a mouse and choose the workplace.
-3. Not sure which keyboard is which? Press **Find a device**, then press a
-   key on it: it lights up in the list.
-4. Press **Save setup**.
+### What you need
 
-**Important:** this is a preview. It plans and saves the setup, but it cannot
-start the extra workplaces yet. That needs kernel drivers that are not
-written; see [windows/DESIGN.md](windows/DESIGN.md).
+- **Windows Server 2016 or newer.** Windows 10 and 11 allow only one person
+  signed in at a time, so they cannot run extra workplaces. Windows Server
+  allows two extra people without extra licences; more need Remote Desktop
+  Services licences.
+- **The Interception input driver** (free for non-commercial use). OpenSeat
+  offers to download and install it the first time; the PC must restart once.
+- One screen per workplace, plus a keyboard and mouse for each.
 
-Run `OpenSeat.exe --demo` to try it with example hardware.
+### How to use it
+
+1. Run `OpenSeat.exe`.
+2. Press **Add a workplace**, click a screen and give it to Workplace 2.
+3. Click "Signs in as" on the Workplace 2 card and enter a Windows account
+   name and password. OpenSeat creates the account if it does not exist.
+4. Optionally click each keyboard and mouse and choose its workplace. If you
+   skip this, OpenSeat asks you at start to press a key and click on each
+   workplace's screen.
+5. Press **Start workplaces** and allow administrator permission.
+
+A small window shows each workplace's state. **Stop** (or Ctrl+Alt+Shift+S on
+workplace 1's keyboard) ends the extra workplaces; their programs keep running
+and come back at the next start.
+
+### How it works
+
+- Each extra workplace is a Remote Desktop session on this same PC, shown full
+  screen on its monitor.
+- The Interception driver tells OpenSeat which keyboard or mouse every input
+  comes from. Workplace 1's input passes through unchanged. Other workplaces'
+  input is sent to a small OpenSeat helper inside that workplace's session.
+- Workplace 1's pointer is kept on its own screens, and the other workplaces'
+  windows cannot be typed into from workplace 1.
+- If OpenSeat stops or crashes, all input goes back to the main desktop.
+
+### Limits
+
+- Sound from every workplace plays on the PC's default speakers.
+- If workplace 1 locks the PC (Win+L), the other screens are hidden until it
+  is unlocked.
+- 3D-heavy programs and games run slower in the extra workplaces.
+- OpenSeat.exe is not code-signed, so Windows SmartScreen warns the first time.
+
+### Testing status
+
+Tested under Wine on Linux: the setup window, the account dialog, the
+press-a-key prompt and the whole input routing path, with a stand-in for the
+Interception driver (`windows/openseat/test/run-wine-test.sh`). **Not yet
+tested on a real Windows Server PC.** The Remote Desktop sign-in, account
+creation and driver installation can only be checked there.
 
 Build it yourself (needs MinGW-w64):
 
 ```bash
 windows/openseat/build.sh
 ```
-
-It has been tested under Wine on Linux, not yet on a real Windows PC. The
-exe is not code-signed, so Windows SmartScreen will show a warning the first
-time you run it.
 
 ## License
 

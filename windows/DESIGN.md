@@ -1,9 +1,11 @@
 # Windows multiseat: design notes
 
-**Status: planning app only.** `openseat/` builds `OpenSeat.exe`, which
-lets the user assign screens, keyboards and mice to workplaces and saves the
-plan to `%APPDATA%\OpenSeat\setup.ini`. `seatenum.c` is a small command-line
-version of the device listing. Nothing in this folder creates a seat.
+**Status: working design implemented in `openseat/`.** It avoids custom
+kernel drivers by using Windows Server's Remote Desktop sessions for the extra
+workplaces and the existing, signed Interception driver for per-device input.
+See the README for how to use it. The notes below describe the original
+driver-based plan, kept for a future version that would also run on
+Windows 10 and 11.
 
 These notes are a starting plan, not a verified design. Items marked
 *(unverified)* are assumptions that need a prototype to confirm.

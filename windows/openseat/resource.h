@@ -1,0 +1,5 @@
+#define IDD_ACCOUNT 100
+#define IDC_ACC_NAME 101
+#define IDC_ACC_PASS 102
+#define IDC_ACC_PASS2 103
+#define IDC_ACC_INFO 104

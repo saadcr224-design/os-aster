@@ -8,55 +8,22 @@
  * Build: see build.sh (MinGW-w64) in this folder.
  */
 
-#ifndef UNICODE
-#define UNICODE
-#endif
-#ifndef _UNICODE
-#define _UNICODE
-#endif
-#define WIN32_LEAN_AND_MEAN
-#define _WIN32_WINNT 0x0601
+#include "common.h"
+#include "resource.h"
 
-#include <windows.h>
 #include <windowsx.h>
 #include <commctrl.h>
 #include <shellapi.h>
-#include <initguid.h>
-#include <cfgmgr32.h>
-#include <devpkey.h>
-#include <hidsdi.h>
+#include <wincred.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <wchar.h>
 
-#define MAX_SCREENS 16
-#define MAX_DEVICES 48
-#define MAX_HANDLES 8
-#define MAX_SEATS 4
-#define NOT_USED (-1)
+int run_controller(HINSTANCE inst, BOOL test);
+int run_agent(HINSTANCE inst, BOOL test);
 
-enum { ID_ADD = 1, ID_REMOVE, ID_FIND, ID_REFRESH, ID_SAVE, ID_MENU_SEAT = 1000, ID_MENU_NONE = 1099 };
-enum { HIT_NONE, HIT_SCREEN, HIT_DEVICE };
-enum { DEV_KEYBOARD = 1, DEV_MOUSE = 2 };
-
-typedef struct {
-    WCHAR key[300];   /* stable id used in the saved file */
-    RECT area;        /* position on the Windows desktop */
-    BOOL primary;
-    int seat;
-    RECT draw;        /* where it is painted */
-} Screen;
-
-typedef struct {
-    WCHAR key[300];
-    WCHAR name[160];
-    int kinds;        /* DEV_KEYBOARD | DEV_MOUSE */
-    HANDLE handles[MAX_HANDLES];
-    int handleCount;
-    int seat;
-    DWORD flashUntil;
-    RECT draw;
-} Device;
+enum { ID_ADD = 1, ID_REMOVE, ID_FIND, ID_REFRESH, ID_SAVE, ID_START, ID_MENU_SEAT = 1000, ID_MENU_NONE = 1099 };
+enum { HIT_NONE, HIT_SCREEN, HIT_DEVICE, HIT_SEAT };
 
 static const COLORREF SEAT_COLORS[MAX_SEATS] = {
     RGB(37, 99, 205), RGB(214, 110, 20), RGB(34, 139, 84), RGB(140, 72, 190),
@@ -73,12 +40,9 @@ static const COLORREF SEAT_COLORS[MAX_SEATS] = {
 #define COL_FLASH   RGB(255, 236, 150)
 #define COL_UNUSED  RGB(140, 146, 155)
 
-static Screen g_screens[MAX_SCREENS];
-static Device g_devices[MAX_DEVICES];
-static int g_screenCount, g_deviceCount, g_seatCount = 1;
-static BOOL g_demo, g_dirty, g_finding;
+static BOOL g_dirty, g_finding;
 static int g_dpi = 96;
-static HWND g_wnd, g_btnAdd, g_btnRemove, g_btnFind, g_btnRefresh, g_btnSave;
+static HWND g_wnd, g_btnAdd, g_btnRemove, g_btnFind, g_btnRefresh, g_btnSave, g_btnStart;
 static HFONT g_fTitle, g_fHead, g_fText, g_fBold, g_fSmall, g_fHuge;
 static WCHAR g_status[300] = L"";
 static int g_hoverKind, g_hoverIndex, g_menuKind, g_menuIndex, g_scroll;
@@ -87,276 +51,20 @@ static RECT g_seatDraw[MAX_SEATS];
 
 static int S(int v) { return MulDiv(v, g_dpi, 96); }
 
-/* ---- saved setup -------------------------------------------------------- */
-
-static void ini_path(WCHAR *out, size_t chars)
-{
-    WCHAR base[MAX_PATH];
-    if (!GetEnvironmentVariableW(L"APPDATA", base, MAX_PATH))
-        lstrcpynW(base, L".", MAX_PATH);
-    _snwprintf(out, chars, L"%ls\\OpenSeat", base);
-    CreateDirectoryW(out, NULL);
-    _snwprintf(out, chars, L"%ls\\OpenSeat\\%ls", base, g_demo ? L"demo-setup.ini" : L"setup.ini");
-}
-
-/* INI keys cannot contain '=' or start with '[' or ';'. */
-static void ini_key(const WCHAR *key, WCHAR *out, size_t chars)
-{
-    size_t i = 0;
-    out[i++] = L'k';
-    for (; *key && i < chars - 1; key++)
-        out[i++] = (*key == L'=' || *key == L'[' || *key == L']' || *key == L';') ? L'_' : *key;
-    out[i] = 0;
-}
-
-static int clamp_seat(int seat) { return (seat >= 0 && seat < g_seatCount) ? seat : NOT_USED; }
-
-static void load_setup(void)
-{
-    WCHAR path[MAX_PATH], key[320];
-    ini_path(path, MAX_PATH);
-    g_seatCount = (int)GetPrivateProfileIntW(L"Setup", L"Workplaces", 1, path);
-    if (g_seatCount < 1) g_seatCount = 1;
-    if (g_seatCount > MAX_SEATS) g_seatCount = MAX_SEATS;
-    /* Anything not in the file belongs to workplace 1, as in plain Windows. */
-    for (int i = 0; i < g_screenCount; i++) {
-        ini_key(g_screens[i].key, key, 320);
-        g_screens[i].seat = clamp_seat((int)GetPrivateProfileIntW(L"Screens", key, 1, path) - 1);
-    }
-    for (int i = 0; i < g_deviceCount; i++) {
-        ini_key(g_devices[i].key, key, 320);
-        g_devices[i].seat = clamp_seat((int)GetPrivateProfileIntW(L"Devices", key, 1, path) - 1);
-    }
-    g_dirty = FALSE;
-}
-
-static BOOL save_setup(void)
-{
-    WCHAR path[MAX_PATH], key[320], value[16];
-    BOOL ok = TRUE;
-    ini_path(path, MAX_PATH);
-    _snwprintf(value, 16, L"%d", g_seatCount);
-    ok &= WritePrivateProfileStringW(L"Setup", L"Workplaces", value, path);
-    ok &= WritePrivateProfileStringW(L"Screens", NULL, NULL, path);
-    ok &= WritePrivateProfileStringW(L"Devices", NULL, NULL, path);
-    for (int i = 0; i < g_screenCount && ok; i++) {
-        ini_key(g_screens[i].key, key, 320);
-        _snwprintf(value, 16, L"%d", g_screens[i].seat + 1); /* 0 = not used */
-        ok &= WritePrivateProfileStringW(L"Screens", key, value, path);
-    }
-    for (int i = 0; i < g_deviceCount && ok; i++) {
-        ini_key(g_devices[i].key, key, 320);
-        _snwprintf(value, 16, L"%d", g_devices[i].seat + 1);
-        ok &= WritePrivateProfileStringW(L"Devices", key, value, path);
-    }
-    if (ok) g_dirty = FALSE;
-    return ok;
-}
-
-/* ---- finding hardware --------------------------------------------------- */
-
-static BOOL CALLBACK screen_proc(HMONITOR monitor, HDC dc, LPRECT rect, LPARAM param)
-{
-    MONITORINFOEXW info;
-    DISPLAY_DEVICEW dd;
-    (void)dc; (void)rect; (void)param;
-    if (g_screenCount >= MAX_SCREENS) return FALSE;
-    info.cbSize = sizeof(info);
-    if (!GetMonitorInfoW(monitor, (MONITORINFO *)&info)) return TRUE;
-
-    Screen *s = &g_screens[g_screenCount++];
-    ZeroMemory(s, sizeof(*s));
-    s->area = info.rcMonitor;
-    s->primary = (info.dwFlags & MONITORINFOF_PRIMARY) != 0;
-    lstrcpynW(s->key, info.szDevice, 300);
-    ZeroMemory(&dd, sizeof(dd));
-    dd.cb = sizeof(dd);
-    if (EnumDisplayDevicesW(info.szDevice, 0, &dd, EDD_GET_DEVICE_INTERFACE_NAME) && dd.DeviceID[0])
-        lstrcpynW(s->key, dd.DeviceID, 300); /* survives the display being renumbered */
-    return TRUE;
-}
-
-static int screen_order(const void *a, const void *b)
-{
-    const Screen *x = a, *y = b;
-    if (x->area.left != y->area.left) return x->area.left < y->area.left ? -1 : 1;
-    return (x->area.top > y->area.top) - (x->area.top < y->area.top);
-}
-
-/* \\?\HID#VID_046D&PID_C31C&MI_00#7&2a1b&0&0000#{guid}  ->  HID\VID_046D&PID_C31C&MI_00\7&2a1b&0&0000 */
-static BOOL instance_id(const WCHAR *path, WCHAR *out, size_t chars)
-{
-    const WCHAR *start = path, *end;
-    if (wcsncmp(path, L"\\\\?\\", 4) == 0 || wcsncmp(path, L"\\??\\", 4) == 0) start = path + 4;
-    end = wcsrchr(start, L'#');
-    if (!end || (size_t)(end - start) >= chars) return FALSE;
-    size_t n = (size_t)(end - start);
-    for (size_t i = 0; i < n; i++) out[i] = start[i] == L'#' ? L'\\' : start[i];
-    out[n] = 0;
-    return TRUE;
-}
-
-static const GUID NO_CONTAINER = { 0, 0, 0, { 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF } };
-
-/* All parts of one physical device (a keyboard with media keys shows up as
- * several "keyboards") share a container id.  Built-in devices have none. */
-static void describe(const WCHAR *path, WCHAR *key, size_t keyChars, WCHAR *name, size_t nameChars)
-{
-    WCHAR id[400];
-    DEVINST node;
-
-    lstrcpynW(key, path, (int)keyChars);
-    name[0] = 0;
-
-    HANDLE file = CreateFileW(path, 0, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING, 0, NULL);
-    if (file != INVALID_HANDLE_VALUE) {
-        WCHAR product[127] = L"";
-        if (HidD_GetProductString(file, product, sizeof(product)) && product[0])
-            lstrcpynW(name, product, (int)nameChars);
-        CloseHandle(file);
-    }
-    if (!instance_id(path, id, 400)) return;
-    if (CM_Locate_DevNodeW(&node, id, CM_LOCATE_DEVNODE_NORMAL) != CR_SUCCESS) return;
-
-    GUID container;
-    DEVPROPTYPE type;
-    ULONG size = sizeof(container);
-    if (CM_Get_DevNode_PropertyW(node, &DEVPKEY_Device_ContainerId, &type, (PBYTE)&container, &size, 0) == CR_SUCCESS &&
-        container.Data1 != 0 && !IsEqualGUID(&container, &NO_CONTAINER)) {
-        _snwprintf(key, keyChars, L"{%08lX-%04X-%04X-%02X%02X-%02X%02X%02X%02X%02X%02X}",
-                   container.Data1, container.Data2, container.Data3,
-                   container.Data4[0], container.Data4[1], container.Data4[2], container.Data4[3],
-                   container.Data4[4], container.Data4[5], container.Data4[6], container.Data4[7]);
-        key[keyChars - 1] = 0;
-    }
-    if (!name[0]) {
-        WCHAR desc[160];
-        ULONG bytes = sizeof(desc);
-        if (CM_Get_DevNode_Registry_PropertyW(node, CM_DRP_DEVICEDESC, NULL, desc, &bytes, 0) == CR_SUCCESS)
-            lstrcpynW(name, desc, (int)nameChars);
-    }
-}
-
-static const WCHAR *kind_name(int kinds)
-{
-    if (kinds == (DEV_KEYBOARD | DEV_MOUSE)) return L"Keyboard and mouse";
-    return kinds == DEV_KEYBOARD ? L"Keyboard" : L"Mouse";
-}
-
-static void add_device(const WCHAR *key, const WCHAR *name, int kind, HANDLE handle)
-{
-    Device *d = NULL;
-    for (int i = 0; i < g_deviceCount; i++)
-        if (lstrcmpiW(g_devices[i].key, key) == 0) d = &g_devices[i];
-    if (!d) {
-        if (g_deviceCount >= MAX_DEVICES) return;
-        d = &g_devices[g_deviceCount++];
-        ZeroMemory(d, sizeof(*d));
-        lstrcpynW(d->key, key, 300);
-    }
-    if (!d->name[0] && name[0]) lstrcpynW(d->name, name, 160);
-    d->kinds |= kind;
-    if (handle && d->handleCount < MAX_HANDLES) d->handles[d->handleCount++] = handle;
-}
-
-static void find_inputs(void)
-{
-    UINT count = 0;
-    if (GetRawInputDeviceList(NULL, &count, sizeof(RAWINPUTDEVICELIST)) != 0 || count == 0) return;
-    RAWINPUTDEVICELIST *list = calloc(count, sizeof(*list));
-    if (!list) return;
-    count = GetRawInputDeviceList(list, &count, sizeof(*list));
-    for (UINT i = 0; count != (UINT)-1 && i < count; i++) {
-        WCHAR path[512] = L"", key[300], name[160];
-        UINT size = 512;
-        if (list[i].dwType != RIM_TYPEKEYBOARD && list[i].dwType != RIM_TYPEMOUSE) continue;
-        if ((int)GetRawInputDeviceInfoW(list[i].hDevice, RIDI_DEVICENAME, path, &size) <= 0 || !path[0]) continue;
-        if (wcsstr(path, L"RDP_") || wcsstr(path, L"Root#RDP")) continue; /* Remote Desktop's virtual devices */
-        describe(path, key, 300, name, 160);
-        add_device(key, name, list[i].dwType == RIM_TYPEKEYBOARD ? DEV_KEYBOARD : DEV_MOUSE, list[i].hDevice);
-    }
-    free(list);
-}
-
-static void demo_hardware(void)
-{
-    static const struct { RECT area; BOOL primary; } screens[] = {
-        { { 0, 0, 1920, 1080 }, TRUE }, { { 1920, 0, 3840, 1080 }, FALSE }, { { 3840, 180, 5120, 1080 }, FALSE },
-    };
-    static const struct { const WCHAR *name; int kinds; } devices[] = {
-        { L"Logitech K120 Keyboard", DEV_KEYBOARD }, { L"Logitech M100 Mouse", DEV_MOUSE },
-        { L"Dell KB216 Keyboard", DEV_KEYBOARD },    { L"Dell MS116 Mouse", DEV_MOUSE },
-        { L"Wireless Desktop Set", DEV_KEYBOARD | DEV_MOUSE },
-    };
-    for (int i = 0; i < 3; i++) {
-        Screen *s = &g_screens[g_screenCount++];
-        ZeroMemory(s, sizeof(*s));
-        s->area = screens[i].area;
-        s->primary = screens[i].primary;
-        _snwprintf(s->key, 300, L"demo-screen-%d", i + 1);
-    }
-    for (int i = 0; i < 5; i++) {
-        WCHAR key[32];
-        _snwprintf(key, 32, L"demo-device-%d", i + 1);
-        add_device(key, devices[i].name, devices[i].kinds, (HANDLE)(INT_PTR)(0x1000 + i));
-    }
-}
-
-static void number_duplicates(void)
-{
-    for (int i = 0; i < g_deviceCount; i++) {
-        Device *d = &g_devices[i];
-        int earlier = 0, total = 0;
-        if (!d->name[0]) lstrcpynW(d->name, kind_name(d->kinds), 160);
-        for (int j = 0; j < g_deviceCount; j++) {
-            /* Compare the names as found, before any number was added. */
-            WCHAR base[160];
-            lstrcpynW(base, g_devices[j].name[0] ? g_devices[j].name : kind_name(g_devices[j].kinds), 160);
-            WCHAR *mark = wcsstr(base, L"  (no. ");
-            if (mark) *mark = 0;
-            if (lstrcmpW(base, d->name) == 0) { total++; if (j < i) earlier++; }
-        }
-        if (total > 1) {
-            WCHAR numbered[160];
-            _snwprintf(numbered, 160, L"%ls  (no. %d)", d->name, earlier + 1);
-            numbered[159] = 0;
-            lstrcpynW(d->name, numbered, 160);
-        }
-    }
-}
-
-static void find_hardware(void)
-{
-    g_screenCount = g_deviceCount = 0;
-    if (g_demo) {
-        demo_hardware();
-    } else {
-        EnumDisplayMonitors(NULL, NULL, screen_proc, 0);
-        qsort(g_screens, (size_t)g_screenCount, sizeof(Screen), screen_order);
-        find_inputs();
-    }
-    number_duplicates();
-}
-
 /* ---- what each workplace has -------------------------------------------- */
-
-static int seat_screens(int seat)
-{
-    int n = 0;
-    for (int i = 0; i < g_screenCount; i++) n += g_screens[i].seat == seat;
-    return n;
-}
-
-static BOOL seat_has(int seat, int kind)
-{
-    for (int i = 0; i < g_deviceCount; i++)
-        if (g_devices[i].seat == seat && (g_devices[i].kinds & kind)) return TRUE;
-    return FALSE;
-}
 
 static BOOL seat_ready(int seat)
 {
-    return seat_screens(seat) > 0 && seat_has(seat, DEV_KEYBOARD) && seat_has(seat, DEV_MOUSE);
+    if (seat == 0) return seat_screens(0) > 0 && seat_has(0, DEV_KEYBOARD) && seat_has(0, DEV_MOUSE);
+    /* An extra workplace's keyboard and mouse can also be picked at start by pressing them. */
+    return seat_screens(seat) > 0 && g_accounts[seat][0];
+}
+
+static BOOL save_all(void)
+{
+    if (!save_setup()) return FALSE;
+    g_dirty = FALSE;
+    return TRUE;
 }
 
 static void seat_label(int seat, WCHAR *out, size_t chars)
@@ -384,6 +92,7 @@ static void update_buttons(void)
     EnableWindow(g_btnAdd, g_seatCount < MAX_SEATS);
     EnableWindow(g_btnRemove, g_seatCount > 1);
     EnableWindow(g_btnSave, g_dirty);
+    EnableWindow(g_btnStart, !g_demo && g_seatCount > 1);
     SetWindowTextW(g_btnFind, g_finding ? L"Stop finding" : L"Find a device");
 }
 
@@ -404,7 +113,7 @@ static void layout(void)
 {
     RECT rc;
     GetClientRect(g_wnd, &rc);
-    int margin = S(20), top = S(128), barH = S(60), sideW = S(300);
+    int margin = S(20), top = S(128), barH = S(60), sideW = S(310);
     int bottom = rc.bottom - barH - S(14);
     int leftW = rc.right - sideW - margin * 3;
     int screensH = (bottom - top) * 37 / 100;
@@ -417,7 +126,8 @@ static void layout(void)
     int by = rc.bottom - barH + S(14), bh = S(32);
     MoveWindow(g_btnFind, margin, by, S(130), bh, TRUE);
     MoveWindow(g_btnRefresh, margin + S(140), by, S(100), bh, TRUE);
-    MoveWindow(g_btnSave, rc.right - margin - S(130), by, S(130), bh, TRUE);
+    MoveWindow(g_btnStart, rc.right - margin - S(170), by, S(170), bh, TRUE);
+    MoveWindow(g_btnSave, rc.right - margin - S(170) - S(130), by, S(120), bh, TRUE);
     int sy = g_rcSeats.bottom - bh;
     MoveWindow(g_btnAdd, g_rcSeats.left, sy, S(160), bh, TRUE);
     MoveWindow(g_btnRemove, g_rcSeats.left + S(168), sy, sideW - S(168), bh, TRUE);
@@ -635,7 +345,7 @@ static void paint_seats(HDC dc)
     text(dc, g_fHead, COL_TEXT, title, DT_VCENTER | DT_SINGLELINE, L"Workplaces");
     text(dc, g_fText, COL_MUTED, hint, DT_SINGLELINE, L"One workplace = one person.");
 
-    int cardH = S(92), y = area.top + S(56);
+    int cardH = S(116), y = area.top + S(56);
     for (int seat = 0; seat < MAX_SEATS; seat++) SetRectEmpty(&g_seatDraw[seat]);
     for (int seat = 0; seat < g_seatCount; seat++, y += cardH + S(8)) {
         WCHAR label[40];
@@ -667,13 +377,27 @@ static void paint_seats(HDC dc)
             text(dc, g_fText, COL_TEXT, word, DT_VCENTER | DT_SINGLELINE, parts[p].word);
             if (!parts[p].yes && !missing) missing = parts[p].word;
         }
-        RECT tip = { card.left + S(16), card.top + S(64), card.right - S(12), card.bottom - S(6) };
-        WCHAR tipText[80];
-        if (ready)
-            lstrcpynW(tipText, seat == 0 ? L"This is the workplace you use now." : L"Has everything it needs.", 80);
-        else
-            _snwprintf(tipText, 80, L"Still needs a %ls. Click one on the left.",
+        WCHAR who[120];
+        BOOL hasAccount = seat == 0 || g_accounts[seat][0];
+        RECT acct = { card.left + S(38), card.top + S(62), card.right - S(12), card.top + S(82) };
+        badge(dc, card.left + S(16), card.top + S(64), S(16), hasAccount);
+        if (seat == 0) lstrcpynW(who, L"Signs in as: you", 120);
+        else if (hasAccount) _snwprintf(who, 120, L"Signs in as: %ls  (click to change)", g_accounts[seat]);
+        else lstrcpynW(who, L"Signs in as: \x2014  click to choose", 120);
+        BOOL hover = g_hoverKind == HIT_SEAT && g_hoverIndex == seat;
+        text(dc, hover ? g_fBold : g_fText, hasAccount ? COL_TEXT : COL_WARN, acct, DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS, who);
+
+        RECT tip = { card.left + S(16), card.top + S(88), card.right - S(12), card.bottom - S(6) };
+        WCHAR tipText[90];
+        if (ready && seat > 0 && missing)
+            lstrcpynW(tipText, L"Keyboard and mouse: picked by pressing them at start.", 90);
+        else if (ready)
+            lstrcpynW(tipText, seat == 0 ? L"This is the workplace you use now." : L"Has everything it needs.", 90);
+        else if (missing && (seat == 0 || missing == parts[0].word))
+            _snwprintf(tipText, 90, L"Still needs a %ls. Click one on the left.",
                        missing == parts[0].word ? L"screen" : missing == parts[1].word ? L"keyboard" : L"mouse");
+        else
+            lstrcpynW(tipText, L"Still needs a Windows account. Click the line above.", 90);
         text(dc, g_fSmall, COL_MUTED, tip, DT_SINGLELINE | DT_END_ELLIPSIS, tipText);
     }
 }
@@ -697,7 +421,8 @@ static void paint(HDC dc)
     RECT noteText = { S(20), S(78), rc.right - S(20), S(110) };
     text(dc, g_fText, COL_NOTE_TX, noteText, DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS,
          g_demo ? L"Demo: these screens and devices are examples, not your real hardware."
-                : L"Preview version: you can plan and save your setup here. It cannot start the extra workplaces yet.");
+         : is_server_os() ? L"Each extra workplace signs in to its own Windows account. When everything is ready, press Start workplaces."
+                          : L"Note: Windows 10 and 11 allow only one person signed in at a time. Several people at once needs Windows Server.");
 
     paint_screens(dc);
     paint_devices(dc);
@@ -706,7 +431,7 @@ static void paint(HDC dc)
     fill(dc, &g_rcBar, COL_PANEL);
     RECT line = { 0, g_rcBar.top, rc.right, g_rcBar.top + 1 };
     fill(dc, &line, COL_LINE);
-    RECT status = { S(20) + S(256), g_rcBar.top, rc.right - S(20) - S(144), g_rcBar.bottom };
+    RECT status = { S(20) + S(256), g_rcBar.top, rc.right - S(20) - S(310), g_rcBar.bottom };
     text(dc, g_fText, g_dirty && !g_status[0] ? COL_WARN : COL_MUTED, status, DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS,
          g_status[0] ? g_status : g_dirty ? L"You have changes that are not saved." : L"");
 }
@@ -721,6 +446,8 @@ static int hit_test(POINT pt, int *index)
     if (PtInRect(&list, pt))
         for (int i = 0; i < g_deviceCount; i++)
             if (PtInRect(&g_devices[i].draw, pt)) { *index = i; return HIT_DEVICE; }
+    for (int s = 1; s < g_seatCount; s++)
+        if (PtInRect(&g_seatDraw[s], pt)) { *index = s; return HIT_SEAT; }
     *index = -1;
     return HIT_NONE;
 }
@@ -768,6 +495,7 @@ static void remove_last_seat(void)
     if (last < 1) return;
     for (int i = 0; i < g_screenCount; i++) if (g_screens[i].seat == last) g_screens[i].seat = 0;
     for (int i = 0; i < g_deviceCount; i++) if (g_devices[i].seat == last) g_devices[i].seat = 0;
+    g_accounts[last][0] = 0;
     g_seatCount--;
     _snwprintf(g_status, 300, L"Workplace %d removed. Its screens and devices went back to Workplace 1.", last + 1);
     changed();
@@ -838,11 +566,112 @@ static BOOL confirm_close(void)
     if (!g_dirty) return TRUE;
     int answer = MessageBoxW(g_wnd, L"Save your changes before closing?", L"OpenSeat", MB_YESNOCANCEL | MB_ICONQUESTION);
     if (answer == IDCANCEL) return FALSE;
-    if (answer == IDYES && !save_setup()) {
+    if (answer == IDYES && !save_all()) {
         MessageBoxW(g_wnd, L"The setup could not be saved.", L"OpenSeat", MB_OK | MB_ICONERROR);
         return FALSE;
     }
     return TRUE;
+}
+
+static BOOL store_password(int seat, const WCHAR *account, const WCHAR *password)
+{
+    WCHAR target[64], user[MAX_COMPUTERNAME_LENGTH + ACCOUNT_CHARS + 2], comp[MAX_COMPUTERNAME_LENGTH + 1];
+    DWORD n = MAX_COMPUTERNAME_LENGTH + 1;
+    if (!GetComputerNameW(comp, &n)) lstrcpynW(comp, L".", MAX_COMPUTERNAME_LENGTH + 1);
+    _snwprintf(user, MAX_COMPUTERNAME_LENGTH + ACCOUNT_CHARS + 2, L"%ls\\%ls", comp, account);
+    seat_cred_target(seat, target, 64);
+    CREDENTIALW c;
+    ZeroMemory(&c, sizeof(c));
+    c.Type = CRED_TYPE_GENERIC; /* the Remote Desktop client reads TERMSRV/<host> */
+    c.TargetName = target;
+    c.UserName = user;
+    c.CredentialBlob = (LPBYTE)password;
+    c.CredentialBlobSize = (DWORD)(wcslen(password) * sizeof(WCHAR));
+    c.Persist = CRED_PERSIST_LOCAL_MACHINE;
+    return CredWriteW(&c, 0);
+}
+
+static INT_PTR CALLBACK account_proc(HWND dlg, UINT msg, WPARAM wp, LPARAM lp)
+{
+    static int seat;
+    if (msg == WM_INITDIALOG) {
+        WCHAR info[200];
+        seat = (int)lp;
+        _snwprintf(info, 200, L"Workplace %d signs in to this Windows account. Every workplace needs its own account, "
+                              L"different from yours.", seat + 1);
+        SetDlgItemTextW(dlg, IDC_ACC_INFO, info);
+        SetDlgItemTextW(dlg, IDC_ACC_NAME, g_accounts[seat]);
+        SendDlgItemMessageW(dlg, IDC_ACC_NAME, EM_LIMITTEXT, 20, 0);
+        SendDlgItemMessageW(dlg, IDC_ACC_PASS, EM_LIMITTEXT, 127, 0);
+        SendDlgItemMessageW(dlg, IDC_ACC_PASS2, EM_LIMITTEXT, 127, 0);
+        return TRUE;
+    }
+    if (msg != WM_COMMAND) return FALSE;
+    if (LOWORD(wp) == IDCANCEL) { EndDialog(dlg, IDCANCEL); return TRUE; }
+    if (LOWORD(wp) != IDOK) return FALSE;
+
+    WCHAR name[ACCOUNT_CHARS], pass[128], pass2[128], me[ACCOUNT_CHARS + 200];
+    DWORD meLen = ACCOUNT_CHARS + 200;
+    const WCHAR *problem = NULL;
+    GetDlgItemTextW(dlg, IDC_ACC_NAME, name, ACCOUNT_CHARS);
+    GetDlgItemTextW(dlg, IDC_ACC_PASS, pass, 128);
+    GetDlgItemTextW(dlg, IDC_ACC_PASS2, pass2, 128);
+    if (!GetUserNameW(me, &meLen)) me[0] = 0;
+    if (!valid_account_name(name)) problem = L"Use an account name of up to 20 letters or digits, without symbols like \\ / : * ? \" < > |.";
+    else if (lstrcmpiW(name, me) == 0) problem = L"This is your own account. The extra workplace needs a different one.";
+    else if (!pass[0]) problem = L"Enter the password. Windows does not allow Remote Desktop sign-in without one.";
+    else if (lstrcmpW(pass, pass2) != 0) problem = L"The two passwords are different.";
+    for (int s = 1; s < g_seatCount && !problem; s++)
+        if (s != seat && lstrcmpiW(name, g_accounts[s]) == 0) problem = L"Another workplace already uses this account.";
+    if (!problem && !store_password(seat, name, pass)) problem = L"Windows did not let OpenSeat save the password.";
+    SecureZeroMemory(pass, sizeof(pass));
+    SecureZeroMemory(pass2, sizeof(pass2));
+    if (problem) { MessageBoxW(dlg, problem, L"OpenSeat", MB_OK | MB_ICONWARNING); return TRUE; }
+    lstrcpynW(g_accounts[seat], name, ACCOUNT_CHARS);
+    EndDialog(dlg, IDOK);
+    return TRUE;
+}
+
+static void edit_account(int seat)
+{
+    if (g_demo) { set_status(L"Demo: accounts cannot be set in demo mode."); return; }
+    if (DialogBoxParamW(GetModuleHandleW(NULL), MAKEINTRESOURCEW(IDD_ACCOUNT), g_wnd, account_proc, (LPARAM)seat) == IDOK) {
+        _snwprintf(g_status, 300, L"Workplace %d signs in as %ls. Not saved yet.", seat + 1, g_accounts[seat]);
+        changed();
+    }
+}
+
+static void start_workplaces(void)
+{
+    WCHAR msg[300];
+    for (int s = 1; s < g_seatCount; s++) {
+        msg[0] = 0;
+        if (seat_screens(s) == 0) _snwprintf(msg, 300, L"Workplace %d needs a screen first.", s + 1);
+        else if (!g_accounts[s][0]) _snwprintf(msg, 300, L"Workplace %d needs a Windows account first. Click its card.", s + 1);
+        if (msg[0]) { set_status(msg); MessageBeep(MB_ICONWARNING); return; }
+    }
+    if (g_dirty && !save_all()) {
+        MessageBoxW(g_wnd, L"The setup could not be saved.", L"OpenSeat", MB_OK | MB_ICONERROR);
+        return;
+    }
+    WCHAR self[MAX_PATH];
+    GetModuleFileNameW(NULL, self, MAX_PATH);
+    SHELLEXECUTEINFOW info;
+    ZeroMemory(&info, sizeof(info));
+    info.cbSize = sizeof(info);
+    info.hwnd = g_wnd;
+    info.lpVerb = L"runas";
+    info.lpFile = self;
+    info.lpParameters = L"--start";
+    info.nShow = SW_SHOWNORMAL;
+    if (ShellExecuteExW(&info)) {
+        set_status(L"Starting the workplaces\x2026 Follow the instructions on each screen.");
+    } else {
+        set_status(GetLastError() == ERROR_CANCELLED ? L"Start was cancelled: OpenSeat needs administrator permission."
+                                                     : L"Could not start the workplaces.");
+    }
+    update_buttons();
+    InvalidateRect(g_wnd, NULL, FALSE);
 }
 
 static HFONT make_font(int points, int weight)
@@ -882,6 +711,7 @@ static LRESULT CALLBACK wnd_proc(HWND wnd, UINT msg, WPARAM wp, LPARAM lp)
         g_btnSave = make_button(L"Save setup", ID_SAVE, TRUE);
         g_btnAdd = make_button(L"Add a workplace", ID_ADD, FALSE);
         g_btnRemove = make_button(L"Remove last", ID_REMOVE, FALSE);
+        g_btnStart = make_button(L"Start workplaces", ID_START, FALSE);
         find_hardware();
         load_setup();
         update_buttons();
@@ -938,7 +768,9 @@ static LRESULT CALLBACK wnd_proc(HWND wnd, UINT msg, WPARAM wp, LPARAM lp)
     case WM_LBUTTONUP: {
         POINT pt = { GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
         int index, kind = hit_test(pt, &index);
-        if (kind != HIT_NONE) {
+        if (kind == HIT_SEAT) {
+            edit_account(index);
+        } else if (kind != HIT_NONE) {
             RECT r = kind == HIT_SCREEN ? g_screens[index].draw : g_devices[index].draw;
             POINT at = { kind == HIT_SCREEN ? r.left : r.right - S(144), r.bottom - (kind == HIT_SCREEN ? 0 : S(8)) };
             ClientToScreen(wnd, &at);
@@ -1020,8 +852,11 @@ static LRESULT CALLBACK wnd_proc(HWND wnd, UINT msg, WPARAM wp, LPARAM lp)
             InvalidateRect(wnd, NULL, FALSE);
             return 0;
         }
+        case ID_START:
+            start_workplaces();
+            return 0;
         case ID_SAVE:
-            if (save_setup()) set_status(L"Saved.");
+            if (save_all()) set_status(L"Saved.");
             else MessageBoxW(wnd, L"The setup could not be saved.", L"OpenSeat", MB_OK | MB_ICONERROR);
             update_buttons();
             InvalidateRect(wnd, NULL, FALSE);
@@ -1042,6 +877,9 @@ static LRESULT CALLBACK wnd_proc(HWND wnd, UINT msg, WPARAM wp, LPARAM lp)
 int WINAPI wWinMain(HINSTANCE inst, HINSTANCE prev, PWSTR cmd, int show)
 {
     (void)prev;
+    BOOL test = cmd && wcsstr(cmd, L"--test") != NULL;
+    if (cmd && wcsstr(cmd, L"--agent")) return run_agent(inst, test);
+    if (cmd && wcsstr(cmd, L"--start")) return run_controller(inst, test);
     g_demo = cmd && wcsstr(cmd, L"--demo") != NULL;
 
     INITCOMMONCONTROLSEX icc = { sizeof(icc), ICC_STANDARD_CLASSES };
