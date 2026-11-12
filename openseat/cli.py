@@ -4,19 +4,14 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
-import select
-import struct
 import sys
-import time
 from pathlib import Path
 
 from . import __version__
-from .devices import DEFAULT_SEAT, Device, discover, event_nodes
+from .devices import DEFAULT_SEAT, Device, discover
+from .identify import IdentifyError, Watcher
 from .logind import LogindError, Runner, capture, validate_seat
 from .plan import PlanError, auto_plan, diff, load_plan
-
-INPUT_KINDS = ("keyboard", "mouse", "combo", "pointer")
 
 
 def _find(devices: list[Device], ids: list[str]) -> list[Device]:
@@ -131,44 +126,25 @@ def cmd_reset(args) -> int:
 
 def cmd_identify(args) -> int:
     """Report which keyboard or mouse the user is touching."""
-    devices = [d for d in discover() if d.kind in INPUT_KINDS]
-    fds: dict[int, Device] = {}
-    denied = 0
-    for device in devices:
-        for name in event_nodes(device):
-            try:
-                fds[os.open(Path(args.dev_input) / name, os.O_RDONLY | os.O_NONBLOCK)] = device
-            except PermissionError:
-                denied += 1
-            except OSError:
-                pass
-    if not fds:
-        reason = "permission denied (run with sudo)" if denied else "no keyboards or mice found"
-        print(f"Cannot watch input devices: {reason}", file=sys.stderr)
-        return 1
-    print(f"Press a key or move a mouse (watching {len(fds)} nodes, {args.timeout:g}s)... Ctrl+C to stop.")
-    event = struct.Struct("llHHi")  # struct input_event
-    deadline = time.monotonic() + args.timeout
-    last: str | None = None
     try:
-        while (left := deadline - time.monotonic()) > 0:
-            ready, _, _ = select.select(list(fds), [], [], left)
-            for fd in ready:
-                try:
-                    data = os.read(fd, event.size * 64)
-                except OSError:
-                    continue
-                types = {event.unpack_from(data, o)[2] for o in range(0, len(data) - event.size + 1, event.size)}
-                device = fds[fd]
-                if types & {1, 2, 3} and device.id != last:  # EV_KEY, EV_REL, EV_ABS
-                    last = device.id
-                    print(f"{device.id:<22} {device.kind:<9} {device.name}  [{device.seat}]")
+        watcher = Watcher(discover(), args.dev_input)
+    except IdentifyError as exc:
+        print(f"Cannot watch input devices: {exc}", file=sys.stderr)
+        return 1
+    print(f"Press a key or move a mouse (watching {len(watcher)} nodes, {args.timeout:g}s)... Ctrl+C to stop.")
+    try:
+        with watcher:
+            for device in watcher.events(args.timeout):
+                print(f"{device.id:<22} {device.kind:<9} {device.name}  [{device.seat}]")
     except KeyboardInterrupt:
         print()
-    finally:
-        for fd in fds:
-            os.close(fd)
     return 0
+
+
+def cmd_gui(args) -> int:
+    from .gui import serve
+
+    return serve(port=args.port, open_browser=not args.no_browser, demo=args.demo)
 
 
 def cmd_doctor(args) -> int:
@@ -256,6 +232,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--dev-input", default="/dev/input", help=argparse.SUPPRESS)
 
     add("doctor", cmd_doctor, "Check that this machine is ready for multiseat.")
+
+    p = add("gui", cmd_gui, "Open the graphical seat manager in your web browser.")
+    p.add_argument("--port", type=int, default=0, help="port to listen on (default: any free port)")
+    p.add_argument("--no-browser", action="store_true", help="print the address instead of opening a browser")
+    p.add_argument("--demo", action="store_true", help="use simulated hardware; changes nothing on this PC")
     return parser
 
 

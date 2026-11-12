@@ -1,0 +1,514 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>openseat</title>
+<style>
+:root {
+  --bg: #f3f4f1; --panel: #ffffff; --panel-2: #f8f9f6; --line: #dcdfd8; --text: #1c211d;
+  --muted: #646c64; --accent: #0f6e5c; --accent-text: #ffffff; --accent-soft: #dff1ec;
+  --warn: #8a5200; --warn-soft: #fdf0d8; --bad: #a3262a; --bad-soft: #fbe4e4;
+  --ok: #1f6b3a; --shadow: 0 1px 2px rgba(20, 30, 20, .06), 0 4px 14px rgba(20, 30, 20, .05);
+  color-scheme: light dark;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #131614; --panel: #1c201d; --panel-2: #222723; --line: #323832; --text: #e8ece7;
+    --muted: #9aa39a; --accent: #4fc4ab; --accent-text: #06231d; --accent-soft: #17352f;
+    --warn: #f0b860; --warn-soft: #3a2c12; --bad: #f08a8d; --bad-soft: #3d1c1e;
+    --ok: #7fd09a; --shadow: 0 1px 2px rgba(0, 0, 0, .4);
+  }
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; background: var(--bg); color: var(--text);
+  font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans", sans-serif;
+}
+button, select, textarea, input { font: inherit; color: inherit; }
+header {
+  position: sticky; top: 0; z-index: 5; background: var(--panel); border-bottom: 1px solid var(--line);
+  display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; padding: 12px 20px;
+}
+.brand { display: flex; align-items: baseline; gap: 10px; margin-right: auto; }
+.brand h1 { font-size: 19px; margin: 0; letter-spacing: -.01em; }
+.brand span { color: var(--muted); font-size: 13px; }
+.tools { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.btn {
+  border: 1px solid var(--line); background: var(--panel); border-radius: 8px; padding: 7px 13px;
+  cursor: pointer; white-space: nowrap;
+}
+.btn:hover { background: var(--panel-2); }
+.btn:focus-visible, select:focus-visible, .card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); font-weight: 600; }
+.btn.primary:hover { filter: brightness(1.08); }
+.btn.danger { color: var(--bad); }
+.btn.on { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+.btn:disabled { opacity: .5; cursor: default; filter: none; }
+.banner { margin: 16px 20px 0; padding: 10px 14px; border-radius: 10px; font-size: 14px; }
+.banner.demo { background: var(--accent-soft); color: var(--accent); }
+.banner.warn { background: var(--warn-soft); color: var(--warn); }
+main { padding: 16px 20px calc(var(--bar-h, 0px) + 32px); }
+.board { display: grid; grid-template-columns: repeat(auto-fill, minmax(310px, 1fr)); gap: 16px; align-items: start; }
+.seat {
+  background: var(--panel); border: 1px solid var(--line); border-radius: 14px; box-shadow: var(--shadow);
+  display: flex; flex-direction: column; min-height: 220px;
+}
+.seat.over { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.seat-head { padding: 14px 16px 10px; border-bottom: 1px solid var(--line); display: flex; align-items: flex-start; gap: 10px; }
+.seat-head h2 { margin: 0; font-size: 17px; }
+.seat-head p { margin: 2px 0 0; color: var(--muted); font-size: 13px; }
+.seat-head .grow { flex: 1; min-width: 0; }
+.icon-btn { border: 0; background: none; color: var(--muted); cursor: pointer; padding: 4px 6px; border-radius: 6px; font-size: 13px; }
+.icon-btn:hover { background: var(--panel-2); color: var(--bad); }
+.checks { list-style: none; margin: 0; padding: 8px 16px 0; font-size: 13px; }
+.checks li { padding: 2px 0 2px 20px; position: relative; }
+.checks li::before { position: absolute; left: 0; font-weight: 700; }
+.checks .ok { color: var(--ok); } .checks .ok::before { content: "✓"; }
+.checks .warn { color: var(--warn); } .checks .warn::before { content: "!"; left: 4px; }
+.cards { padding: 12px; display: flex; flex-direction: column; gap: 8px; flex: 1; }
+.empty { color: var(--muted); font-size: 14px; text-align: center; padding: 26px 10px; border: 1.5px dashed var(--line); border-radius: 10px; }
+.card {
+  display: grid; grid-template-columns: 34px 1fr; gap: 2px 10px; padding: 10px 12px; cursor: grab;
+  background: var(--panel-2); border: 1px solid var(--line); border-radius: 10px; border-left-width: 4px;
+}
+.card.dragging { opacity: .4; }
+.card.changed { border-left-color: var(--accent); background: var(--accent-soft); }
+.card.child { margin-left: 18px; }
+.card.touched { animation: pulse 1.6s ease-out 2; border-color: var(--accent); }
+@keyframes pulse { 0% { box-shadow: 0 0 0 0 var(--accent); } 100% { box-shadow: 0 0 0 12px transparent; } }
+@media (prefers-reduced-motion: reduce) { .card.touched { animation: none; outline: 3px solid var(--accent); } }
+.card svg { grid-row: span 3; width: 30px; height: 30px; color: var(--muted); align-self: start; margin-top: 2px; }
+.card .name { font-weight: 600; overflow-wrap: anywhere; }
+.card .meta { color: var(--muted); font-size: 12.5px; display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: center; }
+.card code { font: 12px ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
+.tag { border: 1px solid var(--line); border-radius: 999px; padding: 0 8px; font-size: 12px; background: var(--panel); }
+.tag.live { color: var(--ok); border-color: currentColor; }
+.tag.note { color: var(--accent); border-color: currentColor; }
+.card .row { display: flex; gap: 8px; align-items: center; margin-top: 6px; }
+.card select { border: 1px solid var(--line); background: var(--panel); border-radius: 6px; padding: 3px 6px; font-size: 13px; max-width: 100%; }
+.card label { font-size: 12.5px; color: var(--muted); }
+.add-seat {
+  border: 1.5px dashed var(--line); border-radius: 14px; min-height: 220px; background: none; cursor: pointer;
+  color: var(--muted); font-size: 15px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px;
+}
+.add-seat:hover, .add-seat.over { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
+.add-seat b { font-size: 28px; font-weight: 400; line-height: 1; }
+.bar {
+  position: fixed; left: 0; right: 0; bottom: 0; z-index: 6; background: var(--panel); border-top: 1px solid var(--line);
+  padding: 12px 20px; display: flex; flex-wrap: wrap; gap: 10px; align-items: center; box-shadow: 0 -4px 14px rgba(0,0,0,.06);
+}
+.bar[hidden] { display: none; }
+.bar p { margin: 0 auto 0 0; }
+.toasts { position: fixed; right: 16px; bottom: calc(var(--bar-h, 0px) + 16px); z-index: 20; display: flex; flex-direction: column; gap: 8px; max-width: min(420px, calc(100vw - 32px)); }
+.toast { background: var(--text); color: var(--bg); padding: 10px 14px; border-radius: 10px; box-shadow: var(--shadow); font-size: 14px; }
+.toast.bad { background: var(--bad); color: #fff; }
+dialog { border: 1px solid var(--line); border-radius: 14px; background: var(--panel); color: var(--text); padding: 0; width: min(620px, calc(100vw - 32px)); box-shadow: 0 20px 60px rgba(0,0,0,.3); }
+dialog::backdrop { background: rgba(10, 15, 10, .5); }
+dialog h3 { margin: 0; padding: 16px 20px; font-size: 17px; border-bottom: 1px solid var(--line); }
+dialog .body { padding: 16px 20px; max-height: 60vh; overflow: auto; }
+dialog .foot { padding: 12px 20px; display: flex; justify-content: flex-end; gap: 8px; border-top: 1px solid var(--line); flex-wrap: wrap; }
+dialog textarea { width: 100%; min-height: 220px; border: 1px solid var(--line); border-radius: 8px; padding: 10px; background: var(--panel-2); font: 13px ui-monospace, Menlo, Consolas, monospace; resize: vertical; }
+.changes { list-style: none; margin: 0; padding: 0; }
+.changes li { padding: 8px 0; border-bottom: 1px solid var(--line); display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: baseline; }
+.changes li:last-child { border-bottom: 0; }
+.changes .move { margin-left: auto; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.changes .err { flex-basis: 100%; color: var(--bad); font-size: 13px; overflow-wrap: anywhere; }
+.changes .done { color: var(--ok); } .changes .fail { color: var(--bad); }
+.hint { color: var(--muted); font-size: 13.5px; margin: 0 0 12px; }
+.fatal { max-width: 560px; margin: 80px auto; padding: 24px; background: var(--panel); border: 1px solid var(--line); border-radius: 14px; }
+@media (max-width: 560px) {
+  header, main, .bar { padding-left: 12px; padding-right: 12px; }
+  .board { grid-template-columns: 1fr; }
+  .banner { margin-left: 12px; margin-right: 12px; }
+}
+</style>
+</head>
+<body>
+<header>
+  <div class="brand"><h1>openseat</h1><span id="subtitle">Loading…</span></div>
+  <div class="tools">
+    <button class="btn" id="btn-identify" title="Press a key or move a mouse to see which device it is">Identify devices</button>
+    <button class="btn" id="btn-auto" title="Suggest a layout: one seat per graphics card">Auto arrange</button>
+    <button class="btn" id="btn-import">Import plan</button>
+    <button class="btn" id="btn-export">Export plan</button>
+    <button class="btn" id="btn-refresh" title="Look for newly plugged-in devices">Refresh</button>
+    <button class="btn danger" id="btn-reset">Reset all</button>
+  </div>
+</header>
+<div id="banners"></div>
+<main><div class="board" id="board"></div></main>
+<div class="bar" id="bar" hidden>
+  <p id="bar-text"></p>
+  <button class="btn" id="btn-discard">Discard changes</button>
+  <button class="btn primary" id="btn-apply">Review and apply</button>
+</div>
+<div class="toasts" id="toasts" role="status" aria-live="polite"></div>
+
+<dialog id="dlg-apply">
+  <h3 id="apply-title">Apply these changes?</h3>
+  <div class="body"><p class="hint" id="apply-hint"></p><ul class="changes" id="apply-list"></ul></div>
+  <div class="foot">
+    <button class="btn" id="apply-cancel">Cancel</button>
+    <button class="btn primary" id="apply-go">Apply</button>
+  </div>
+</dialog>
+<dialog id="dlg-reset">
+  <h3>Reset all seats?</h3>
+  <div class="body"><p>Every device goes back to <b>seat0</b>. Extra seats disappear and anyone logged in on them is logged out.</p></div>
+  <div class="foot">
+    <button class="btn" data-close>Cancel</button>
+    <button class="btn primary" id="reset-go">Reset all</button>
+  </div>
+</dialog>
+<dialog id="dlg-export">
+  <h3>Export plan</h3>
+  <div class="body">
+    <p class="hint">This is the layout on screen, including changes not applied yet. Save it and apply it later with <code>sudo openseat apply seats.toml</code>.</p>
+    <textarea id="export-text" readonly aria-label="Plan file"></textarea>
+  </div>
+  <div class="foot">
+    <button class="btn" data-close>Close</button>
+    <button class="btn" id="export-copy">Copy</button>
+    <button class="btn primary" id="export-save">Download seats.toml</button>
+  </div>
+</dialog>
+<dialog id="dlg-import">
+  <h3>Import plan</h3>
+  <div class="body">
+    <p class="hint">Paste a plan file or choose one. Nothing changes until you apply.</p>
+    <p><input type="file" id="import-file" accept=".toml,text/plain" aria-label="Plan file"></p>
+    <textarea id="import-text" aria-label="Plan text" placeholder='[seats.seat1]&#10;devices = ["pci:0000:01:00.0", "hub:1-3"]'></textarea>
+  </div>
+  <div class="foot">
+    <button class="btn" data-close>Cancel</button>
+    <button class="btn primary" id="import-go">Load plan</button>
+  </div>
+</dialog>
+
+<script>
+"use strict";
+const token = location.hash.slice(1);
+const $ = (id) => document.getElementById(id);
+const KIND_LABEL = { gpu: "Graphics card", keyboard: "Keyboard", mouse: "Mouse", combo: "Keyboard + mouse", pointer: "Touchpad / tablet", sound: "Sound", "usb-hub": "USB hub" };
+const ICONS = {
+  gpu: '<rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/>',
+  keyboard: '<rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10"/>',
+  mouse: '<rect x="7" y="3" width="10" height="18" rx="5"/><path d="M12 7v4"/>',
+  combo: '<rect x="2" y="7" width="13" height="10" rx="2"/><rect x="17" y="8" width="5" height="9" rx="2.5"/><path d="M5 12h7"/>',
+  pointer: '<rect x="4" y="4" width="16" height="16" rx="2"/><path d="M4 15h16M12 15v5"/>',
+  sound: '<path d="M4 10v4h4l5 4V6L8 10H4zM16.5 9a4 4 0 0 1 0 6M19 6.5a8 8 0 0 1 0 11"/>',
+  "usb-hub": '<rect x="5" y="9" width="14" height="8" rx="2"/><path d="M9 9V5M15 9V5M12 17v3"/>',
+};
+
+let server = { devices: [], seats: ["seat0"], demo: false };
+let desired = {};          // device id -> seat shown on screen
+let extraSeats = [];       // seats added in the UI that have no devices yet
+let identifying = false;
+let touched = null;
+
+function el(tag, props = {}, ...children) {
+  const node = document.createElement(tag);
+  for (const [k, v] of Object.entries(props)) {
+    if (k === "class") node.className = v;
+    else if (k.startsWith("on")) node.addEventListener(k.slice(2), v);
+    else if (v !== false && v != null) node.setAttribute(k, v === true ? "" : v);
+  }
+  for (const c of children.flat()) if (c != null) node.append(c);
+  return node;
+}
+function icon(kind) {
+  const span = el("span");
+  span.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[kind] || ICONS["usb-hub"]}</svg>`;
+  return span.firstChild;
+}
+function toast(text, bad = false) {
+  const t = el("div", { class: "toast" + (bad ? " bad" : "") }, text);
+  // An open dialog sits in the browser's top layer; put messages inside it so they stay visible.
+  const host = document.querySelector("dialog[open]") || document.body;
+  if ($("toasts").parentNode !== host) host.append($("toasts"));
+  $("toasts").append(t);
+  setTimeout(() => t.remove(), bad ? 9000 : 4500);
+}
+async function api(path, body = {}) {
+  let res;
+  try {
+    res = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json", "X-Openseat-Token": token }, body: JSON.stringify(body) });
+  } catch {
+    throw new Error("Cannot reach openseat. Is it still running in the terminal?");
+  }
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
+  return data;
+}
+
+const current = (d) => d.seat;
+const pending = () => server.devices.filter((d) => desired[d.id] !== current(d));
+function seatList() {
+  const used = new Set(["seat0", ...server.seats, ...Object.values(desired), ...extraSeats]);
+  return [...used].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+}
+function nextSeatName() {
+  const names = new Set(seatList());
+  let n = 1;
+  while (names.has("seat" + n)) n++;
+  return "seat" + n;
+}
+function adopt(state, keepLayout = false) {
+  const old = desired;
+  server = state;
+  desired = {};
+  for (const d of state.devices) {
+    const base = d.seat === "mixed" ? "seat0" : d.seat;
+    desired[d.id] = keepLayout && old[d.id] ? old[d.id] : base;
+  }
+  if (!keepLayout) extraSeats = [];
+}
+function move(id, seat) {
+  const dev = server.devices.find((d) => d.id === id);
+  if (!dev) return;
+  desired[id] = seat;
+  if (dev.kind === "usb-hub") for (const d of server.devices) if (d.hub === id) desired[d.id] = seat;
+  render();
+}
+function addSeat(withDevice) {
+  const name = nextSeatName();
+  extraSeats.push(name);
+  if (withDevice) move(withDevice, name); else render();
+  return name;
+}
+function removeSeat(seat) {
+  for (const d of server.devices) if (desired[d.id] === seat) desired[d.id] = "seat0";
+  extraSeats = extraSeats.filter((s) => s !== seat);
+  render();
+}
+
+function seatChecks(seat, devices) {
+  const has = (...kinds) => devices.some((d) => kinds.includes(d.kind));
+  const out = [];
+  if (seat !== "seat0" && devices.length === 0) return out;
+  out.push(has("gpu") ? ["ok", "Has a graphics card"] : ["warn", "No graphics card: no login screen will appear"]);
+  out.push(has("keyboard", "combo") ? ["ok", "Has a keyboard"] : ["warn", "No keyboard"]);
+  out.push(has("mouse", "combo", "pointer") ? ["ok", "Has a mouse"] : ["warn", "No mouse"]);
+  return out;
+}
+
+function card(dev, seats) {
+  const changed = desired[dev.id] !== current(dev);
+  const hubHere = dev.hub && desired[dev.hub] === desired[dev.id];
+  const select = el("select", { id: "mv-" + dev.id, onchange: (e) => {
+    if (e.target.value === "+") addSeat(dev.id); else move(dev.id, e.target.value);
+    requestAnimationFrame(() => document.getElementById("mv-" + dev.id)?.focus());
+  } },
+    seats.map((s) => el("option", { value: s, selected: s === desired[dev.id] }, s)),
+    el("option", { value: "+" }, "New seat…"));
+  const meta = [el("span", {}, KIND_LABEL[dev.kind] || dev.kind), el("code", {}, dev.id)];
+  if (dev.hub) meta.push(el("span", { class: "tag" }, "on " + dev.hub));
+  if (dev.seat === "mixed") meta.push(el("span", { class: "tag note" }, "partly assigned"));
+  if (changed) meta.push(el("span", { class: "tag note" }, "was " + (dev.seat === "mixed" ? "split" : dev.seat)));
+  const details = dev.details.map((t) => el("span", { class: "tag" + (/: connected$/.test(t) ? " live" : "") }, t));
+  const node = el("div", {
+    class: "card" + (changed ? " changed" : "") + (hubHere ? " child" : "") + (touched === dev.id ? " touched" : ""),
+    draggable: "true", "data-id": dev.id,
+    ondragstart: (e) => { e.dataTransfer.setData("text/plain", dev.id); e.dataTransfer.effectAllowed = "move"; node.classList.add("dragging"); },
+    ondragend: () => node.classList.remove("dragging"),
+  },
+    icon(dev.kind),
+    el("div", { class: "name" }, dev.name),
+    el("div", { class: "meta" }, meta),
+    details.length ? el("div", { class: "meta" }, details) : null,
+    el("div", { class: "row", style: "grid-column: 2" }, el("label", { for: "mv-" + dev.id }, "Seat"), select));
+  return node;
+}
+function dropTarget(node, onDrop) {
+  node.addEventListener("dragover", (e) => { e.preventDefault(); node.classList.add("over"); });
+  node.addEventListener("dragleave", (e) => { if (!node.contains(e.relatedTarget)) node.classList.remove("over"); });
+  node.addEventListener("drop", (e) => { e.preventDefault(); node.classList.remove("over"); const id = e.dataTransfer.getData("text/plain"); if (id) onDrop(id); });
+}
+function ordered(devices) {
+  // Keep hub members directly under their hub when they share its seat.
+  const out = [];
+  const placed = new Set();
+  for (const d of devices) {
+    if (placed.has(d.id) || (d.hub && devices.some((h) => h.id === d.hub))) continue;
+    out.push(d); placed.add(d.id);
+    if (d.kind === "usb-hub") for (const c of devices) if (c.hub === d.id) { out.push(c); placed.add(c.id); }
+  }
+  return out;
+}
+
+function render() {
+  const seats = seatList();
+  const board = $("board");
+  const focusId = document.activeElement?.id;
+  board.replaceChildren();
+  for (const seat of seats) {
+    const devices = server.devices.filter((d) => desired[d.id] === seat);
+    const isNew = !server.seats.includes(seat);
+    const col = el("section", { class: "seat", "aria-label": seat },
+      el("div", { class: "seat-head" },
+        el("div", { class: "grow" }, el("h2", {}, seat),
+          el("p", {}, seat === "seat0" ? "Main seat. Unassigned devices live here." : isNew ? "New seat, not applied yet" : `${devices.length} device${devices.length === 1 ? "" : "s"}`)),
+        seat !== "seat0" ? el("button", { class: "icon-btn", title: `Move everything on ${seat} back to seat0`, onclick: () => removeSeat(seat) }, "Remove") : null),
+      el("ul", { class: "checks" }, seatChecks(seat, devices).map(([level, text]) => el("li", { class: level }, text))),
+      el("div", { class: "cards" }, devices.length ? ordered(devices).map((d) => card(d, seats)) : el("div", { class: "empty" }, "Drag devices here")));
+    dropTarget(col, (id) => move(id, seat));
+    board.append(col);
+  }
+  const add = el("button", { class: "add-seat", onclick: () => addSeat() }, el("b", {}, "+"), "Add a seat", el("small", {}, "or drop a device here"));
+  dropTarget(add, (id) => addSeat(id));
+  board.append(add);
+  if (focusId) document.getElementById(focusId)?.focus();
+
+  const n = pending().length;
+  $("bar").hidden = n === 0;
+  $("bar-text").textContent = `${n} device${n === 1 ? "" : "s"} will move. Nothing has changed on the PC yet.`;
+  syncBarHeight();
+  const live = server.seats.length;
+  $("subtitle").textContent = `${server.devices.length} devices · ${live} active seat${live === 1 ? "" : "s"}`;
+
+  const banners = $("banners");
+  banners.replaceChildren();
+  if (server.demo) banners.append(el("div", { class: "banner demo" }, "Demo mode: this is simulated hardware. Nothing on this PC is changed."));
+  const gpus = server.devices.filter((d) => d.kind === "gpu").length;
+  if (gpus < 2) banners.append(el("div", { class: "banner warn" }, `Found ${gpus} graphics card${gpus === 1 ? "" : "s"}. Each seat needs its own graphics card, so add another one before creating a second seat.`));
+  if (touched) document.querySelector(".card.touched")?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+}
+
+function syncBarHeight() {
+  document.documentElement.style.setProperty("--bar-h", ($("bar").hidden ? 0 : $("bar").offsetHeight) + "px");
+}
+window.addEventListener("resize", syncBarHeight);
+
+async function refresh(keepLayout = false) {
+  adopt(await api("/api/state"), keepLayout);
+  render();
+}
+
+// --- apply -----------------------------------------------------------------
+function changeRow(name, id, from, to) {
+  return el("li", {}, el("b", {}, name), el("code", {}, id), el("span", { class: "move" }, `${from} → ${to}`));
+}
+$("btn-apply").onclick = () => {
+  $("apply-title").textContent = "Apply these changes?";
+  $("apply-hint").textContent = server.demo ? "Demo mode: only the simulated PC changes." : "Your system may ask for an administrator password. People logged in on a seat that loses its devices can be logged out.";
+  $("apply-list").replaceChildren(...pending().map((d) => changeRow(d.name, d.id, d.seat === "mixed" ? "split" : d.seat, desired[d.id])));
+  $("apply-go").hidden = false; $("apply-go").disabled = false;
+  $("apply-cancel").textContent = "Cancel";
+  $("dlg-apply").showModal();
+};
+$("apply-cancel").onclick = () => $("dlg-apply").close();
+$("apply-go").onclick = async () => {
+  $("apply-go").disabled = true;
+  const wanted = { ...desired };
+  try {
+    const out = await api("/api/apply", { assignments: wanted });
+    const failed = out.results.filter((r) => !r.ok);
+    adopt(out.state);
+    // Keep on screen whatever did not go through, so it can be retried.
+    for (const r of failed) if (r.id in desired) desired[r.id] = r.to;
+    render();
+    if (!failed.length) { $("dlg-apply").close(); toast(`Done. ${out.results.length} device${out.results.length === 1 ? "" : "s"} moved.`); return; }
+    $("apply-title").textContent = `${failed.length} of ${out.results.length} changes failed`;
+    $("apply-hint").textContent = "The failed devices are still marked as pending. Fix the problem and apply again.";
+    $("apply-list").replaceChildren(...out.results.map((r) => {
+      const li = changeRow(r.name, r.id, r.from, r.to);
+      li.querySelector(".move").classList.add(r.ok ? "done" : "fail");
+      li.querySelector(".move").textContent += r.ok ? "  done" : "  failed";
+      if (!r.ok) li.append(el("div", { class: "err" }, r.error));
+      return li;
+    }));
+    $("apply-go").hidden = true; $("apply-cancel").textContent = "Close";
+  } catch (err) {
+    $("apply-go").disabled = false;
+    toast(err.message, true);
+  }
+};
+$("btn-discard").onclick = () => { adopt(server); render(); };
+
+// --- other tools -----------------------------------------------------------
+function loadLayout(out, label) {
+  for (const [id, seat] of Object.entries(out.assignments)) if (id in desired) desired[id] = seat;
+  extraSeats = [...new Set([...extraSeats, ...out.seats])];
+  render();
+  const n = pending().length;
+  toast(n ? `${label}: ${n} device${n === 1 ? "" : "s"} to move. Review and apply when ready.` : `${label}: the PC already matches.`);
+}
+$("btn-auto").onclick = async () => {
+  try { loadLayout(await api("/api/auto"), "Suggested layout"); } catch (err) { toast(err.message, true); }
+};
+$("btn-refresh").onclick = async () => {
+  try { await refresh(true); toast("Device list updated."); } catch (err) { toast(err.message, true); }
+};
+$("btn-reset").onclick = () => $("dlg-reset").showModal();
+$("reset-go").onclick = async () => {
+  try { adopt((await api("/api/reset")).state); render(); toast("All devices are back on seat0."); }
+  catch (err) { toast(err.message, true); }
+  $("dlg-reset").close();
+};
+$("btn-export").onclick = async () => {
+  try { $("export-text").value = (await api("/api/export", { assignments: desired })).toml; $("dlg-export").showModal(); }
+  catch (err) { toast(err.message, true); }
+};
+$("export-copy").onclick = async () => {
+  try { await navigator.clipboard.writeText($("export-text").value); toast("Copied."); }
+  catch { $("export-text").select(); toast("Press Ctrl+C to copy."); }
+};
+$("export-save").onclick = () => {
+  const a = el("a", { href: URL.createObjectURL(new Blob([$("export-text").value], { type: "text/plain" })), download: "seats.toml" });
+  a.click(); URL.revokeObjectURL(a.href);
+};
+$("btn-import").onclick = () => { $("import-text").value = ""; $("import-file").value = ""; $("dlg-import").showModal(); };
+$("import-file").onchange = async (e) => { const f = e.target.files[0]; if (f) $("import-text").value = await f.text(); };
+$("import-go").onclick = async () => {
+  try {
+    const out = await api("/api/import", { toml: $("import-text").value });
+    $("dlg-import").close();
+    loadLayout(out, "Plan loaded");
+    if (out.missing.length) toast(`Not connected, skipped: ${out.missing.join(", ")}`, true);
+  } catch (err) { toast(err.message, true); }
+};
+for (const b of document.querySelectorAll("[data-close]")) b.onclick = () => b.closest("dialog").close();
+
+async function identifyLoop() {
+  while (identifying) {
+    try {
+      const { id } = await api("/api/identify", { timeout: 3 });
+      if (!identifying) break;
+      if (id && id !== touched) {
+        touched = id; render();
+        const dev = server.devices.find((d) => d.id === id);
+        if (dev) toast(`You touched: ${dev.name} (${desired[id]})`);
+      }
+    } catch (err) {
+      identifying = false;
+      toast(`Identify stopped: ${err.message}`, true);
+    }
+  }
+  touched = null;
+  $("btn-identify").classList.remove("on");
+  $("btn-identify").textContent = "Identify devices";
+  $("btn-identify").setAttribute("aria-pressed", "false");
+  render();
+}
+$("btn-identify").onclick = () => {
+  identifying = !identifying;
+  if (!identifying) return;
+  $("btn-identify").classList.add("on");
+  $("btn-identify").textContent = "Stop identifying";
+  $("btn-identify").setAttribute("aria-pressed", "true");
+  toast("Press a key or move a mouse. The device will light up.");
+  identifyLoop();
+};
+window.addEventListener("beforeunload", (e) => { if (pending().length) e.preventDefault(); });
+
+if (!token) {
+  document.body.replaceChildren(el("div", { class: "fatal" }, el("h2", {}, "Open the full address"), el("p", {}, "This page needs the complete address that openseat printed in the terminal, including the part after the # sign.")));
+} else {
+  refresh().catch((err) => {
+    document.body.replaceChildren(el("div", { class: "fatal" }, el("h2", {}, "Cannot load"), el("p", {}, err.message)));
+  });
+}
+</script>
+</body>
+</html>

@@ -8,7 +8,7 @@ and contains no code from, ASTER or IBIK.
 
 | Part | Status |
 | --- | --- |
-| **Linux** (`openseat`) | Working command-line tool. Tested against simulated hardware; not yet run on a real multi-GPU PC. |
+| **Linux** (`openseat`) | Working command-line tool and graphical interface. Tested against simulated hardware; not yet run on a real multi-GPU PC. |
 | **Windows** (`windows/`) | Device-discovery tool only (compiles, not yet run on Windows). Creating seats needs kernel drivers that are **not written** — see [windows/DESIGN.md](windows/DESIGN.md). |
 
 ## Linux
@@ -30,7 +30,39 @@ easy: it finds your hardware, suggests a split, and applies it.
 pip install .
 ```
 
-### Use
+### Graphical interface
+
+```bash
+openseat gui
+```
+
+This opens the seat manager in your web browser. Drag devices between seats
+(or use the "Seat" menu on each device), then press **Review and apply**.
+
+![openseat GUI](docs/gui.png)
+
+- **Identify devices**: press a key or move a mouse and the device lights up.
+  Needs permission to read input devices (`sudo openseat gui`, or be in the
+  `input` group).
+- **Auto arrange**: suggests one seat per graphics card.
+- **Import / Export plan**: load or save the layout as a plan file.
+- **Reset all**: every device back to `seat0`.
+
+Nothing changes on the PC until you apply. When you apply, your system may
+ask for an administrator password.
+
+To try the interface without the right hardware (it works on any computer
+with Python, including Windows and macOS):
+
+```bash
+openseat gui --demo
+```
+
+The GUI is a small local server. It listens only on this computer
+(`127.0.0.1`) and only accepts requests carrying the secret code in the
+address it prints, so keep that address private while it is running.
+
+### Command line
 
 See your hardware:
 
@@ -86,6 +118,7 @@ A login screen appears on each seat's monitor. The assignment is permanent
 | `openseat detach ID...` | Return devices to `seat0` |
 | `openseat reset` | Undo everything: all devices back to `seat0` |
 | `openseat doctor` | Check the PC is ready for multiseat |
+| `openseat gui [--demo] [--port N] [--no-browser]` | Open the graphical interface |
 
 Commands that change things accept `-n` / `--dry-run`.
 
