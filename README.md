@@ -9,7 +9,7 @@ and contains no code from, ASTER or IBIK.
 | Part | Status |
 | --- | --- |
 | **Linux** (`openseat`) | Working command-line tool and graphical interface. Tested against simulated hardware; not yet run on a real multi-GPU PC. |
-| **Windows** (`windows/`) | Device-discovery tool only (compiles, not yet run on Windows). Creating seats needs kernel drivers that are **not written** — see [windows/DESIGN.md](windows/DESIGN.md). |
+| **Windows** (`windows/openseat/`) | `OpenSeat.exe`: plan and save who uses which screen, keyboard and mouse. Tested under Wine, not yet on real Windows. It cannot start the extra workplaces: that needs kernel drivers that are **not written** — see [windows/DESIGN.md](windows/DESIGN.md). |
 
 ## Linux
 
@@ -145,10 +145,33 @@ python3 -m unittest
 
 ## Windows
 
-See [windows/DESIGN.md](windows/DESIGN.md). In short: `windows/seatenum.c`
-lists monitors, keyboards and mice and can show which input device is in use,
-but real multiseat on Windows needs signed kernel drivers that do not exist
-in this repository yet.
+`windows/openseat/` is a native Windows program, **OpenSeat.exe**. It shows
+your screens, keyboards and mice, and lets you divide them into workplaces
+(one workplace = one person):
+
+![OpenSeat for Windows](docs/windows.png)
+
+1. Press **Add a workplace**.
+2. Click a screen, a keyboard and a mouse and choose the workplace.
+3. Not sure which keyboard is which? Press **Find a device**, then press a
+   key on it: it lights up in the list.
+4. Press **Save setup**.
+
+**Important:** this is a preview. It plans and saves the setup, but it cannot
+start the extra workplaces yet. That needs kernel drivers that are not
+written; see [windows/DESIGN.md](windows/DESIGN.md).
+
+Run `OpenSeat.exe --demo` to try it with example hardware.
+
+Build it yourself (needs MinGW-w64):
+
+```bash
+windows/openseat/build.sh
+```
+
+It has been tested under Wine on Linux, not yet on a real Windows PC. The
+exe is not code-signed, so Windows SmartScreen will show a warning the first
+time you run it.
 
 ## License
 

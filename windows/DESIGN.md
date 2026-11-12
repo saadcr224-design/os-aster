@@ -1,8 +1,9 @@
 # Windows multiseat: design notes
 
-**Status: design only.** The only code here is `seatenum.c`, a user-mode tool
-that lists monitors, keyboards and mice. It compiles with MinGW but has not
-been run on Windows yet. Nothing in this folder creates a seat.
+**Status: planning app only.** `openseat/` builds `OpenSeat.exe`, which
+lets the user assign screens, keyboards and mice to workplaces and saves the
+plan to `%APPDATA%\\OpenSeat\\setup.ini`. `seatenum.c` is a small command-line
+version of the device listing. Nothing in this folder creates a seat.
 
 These notes are a starting plan, not a verified design. Items marked
 *(unverified)* are assumptions that need a prototype to confirm.
@@ -25,8 +26,8 @@ So a Windows multiseat product has to add what the OS lacks, in kernel mode.
 
 | # | Component | Mode | Purpose | State |
 | --- | --- | --- | --- | --- |
-| 1 | Device discovery | user | List monitors/keyboards/mice, identify them | `seatenum.c` |
-| 2 | Seat configuration | user | Store "this monitor + keyboard + mouse = seat N" | not started |
+| 1 | Device discovery | user | List monitors/keyboards/mice, identify them | done (`openseat/`) |
+| 2 | Seat configuration | user | Store "this monitor + keyboard + mouse = seat N" | done (`openseat/`) |
 | 3 | Session service | user (service) | Start one extra interactive session per seat and keep it alive | not started |
 | 4 | Input filter drivers | kernel | Send each keyboard/mouse only to its seat's session | not started |
 | 5 | Display routing | kernel | Show each session on its own physical monitor | not started |
@@ -66,8 +67,8 @@ anything.
 
 ## Suggested order of work
 
-1. Run `seatenum.exe` and `seatenum.exe --watch` on real hardware; fix issues.
-2. Seat configuration file and a small GUI/CLI to edit it.
+1. Run `OpenSeat.exe` on real Windows hardware; fix issues.
+2. Have the later components read `setup.ini`.
 3. Prototype the session service on a test VM.
 4. Input filter driver in a VM with test signing.
 5. Display routing prototype.
