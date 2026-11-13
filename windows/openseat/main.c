@@ -26,7 +26,8 @@ enum { ID_ADD = 1, ID_REMOVE, ID_FIND, ID_REFRESH, ID_SAVE, ID_START, ID_SHARING
 enum { HIT_NONE, HIT_SCREEN, HIT_DEVICE, HIT_SEAT, HIT_IDLE };
 
 static const COLORREF SEAT_COLORS[MAX_SEATS] = {
-    RGB(37, 99, 205), RGB(214, 110, 20), RGB(34, 139, 84), RGB(140, 72, 190),
+    RGB(37, 99, 205), RGB(214, 110, 20), RGB(34, 139, 84),  RGB(140, 72, 190), RGB(200, 50, 80),
+    RGB(0, 140, 150), RGB(150, 110, 20), RGB(90, 90, 200),  RGB(190, 60, 160), RGB(80, 120, 60),
 };
 #define COL_BG      RGB(243, 244, 246)
 #define COL_PANEL   RGB(255, 255, 255)
@@ -45,7 +46,7 @@ static int g_dpi = 96;
 static HWND g_wnd, g_btnAdd, g_btnRemove, g_btnFind, g_btnRefresh, g_btnSave, g_btnStart, g_btnSharing;
 static HFONT g_fTitle, g_fHead, g_fText, g_fBold, g_fSmall, g_fHuge;
 static WCHAR g_status[300] = L"";
-static int g_hoverKind, g_hoverIndex, g_menuKind, g_menuIndex, g_scroll;
+static int g_hoverKind, g_hoverIndex, g_menuKind, g_menuIndex, g_scroll, g_screenScroll;
 static RECT g_rcScreens, g_rcDevices, g_rcSeats, g_rcBar;
 static RECT g_seatDraw[MAX_SEATS];
 static RECT g_screenRow[MAX_SCREENS], g_idleRow[MAX_IDLE]; /* rows of the screen list */
@@ -220,7 +221,11 @@ static void paint_screen_list(HDC dc, RECT stage)
     fill(dc, &divider, RGB(236, 238, 241));
     int saved = SaveDC(dc);
     IntersectClipRect(dc, list.left, list.top, list.right, list.bottom);
-    int y = list.top;
+    int rowsH = (g_screenCount + g_idleCount) * S(SCREEN_ROW_H), maxScroll = rowsH - (list.bottom - list.top);
+    if (maxScroll < 0) maxScroll = 0;
+    if (g_screenScroll > maxScroll) g_screenScroll = maxScroll;
+    if (g_screenScroll < 0) g_screenScroll = 0;
+    int y = list.top - g_screenScroll;
     for (int i = 0; i < MAX_SCREENS; i++) SetRectEmpty(&g_screenRow[i]);
     for (int i = 0; i < MAX_IDLE; i++) SetRectEmpty(&g_idleRow[i]);
 
@@ -275,6 +280,11 @@ static void paint_screen_list(HDC dc, RECT stage)
         text(dc, g_fText, COL_MUTED, list, DT_CENTER | DT_VCENTER | DT_SINGLELINE, L"Connect a screen with a cable and it appears here.");
     }
     RestoreDC(dc, saved);
+    if (maxScroll > 0) { /* a thin bar shows there are more rows: turn the mouse wheel */
+        int h = list.bottom - list.top, barH = h * h / rowsH, barY = list.top + (h - barH) * g_screenScroll / maxScroll;
+        RECT bar = { list.right + S(3), barY, list.right + S(7), barY + barH };
+        fill(dc, &bar, RGB(190, 195, 203));
+    }
 }
 
 static void paint_screens(HDC dc)
@@ -322,7 +332,7 @@ static void paint_screens(HDC dc)
         RECT low = { r.left + S(4), r.top + h * 70 / 100, r.right - S(4), r.bottom - S(4) };
         _snwprintf(line, 64, L"%d", i + 1);
         if (h < S(84) || r.right - r.left < S(130)) { /* small picture: the number only, details are in the list */
-            text(dc, g_fHuge, color, r, DT_CENTER | DT_VCENTER | DT_SINGLELINE, line);
+            text(dc, h < S(44) ? g_fBold : g_fHuge, color, r, DT_CENTER | DT_VCENTER | DT_SINGLELINE, line);
             continue;
         }
         text(dc, g_fHuge, color, big, DT_CENTER | DT_VCENTER | DT_SINGLELINE, line);
@@ -430,24 +440,31 @@ static void paint_seats(HDC dc)
     text(dc, g_fHead, COL_TEXT, title, DT_VCENTER | DT_SINGLELINE, L"Workplaces");
     text(dc, g_fText, COL_MUTED, hint, DT_SINGLELINE, L"One workplace = one person.");
 
-    int cardH = S(116), y = area.top + S(56);
+    /* With many workplaces the cards shrink, down to one line each. */
+    int gap = S(6), room = area.bottom - S(40) - (area.top + S(56));
+    int cardH = (room - gap * (g_seatCount - 1)) / g_seatCount, y = area.top + S(56);
+    if (cardH > S(116)) cardH = S(116);
+    if (cardH < S(30)) cardH = S(30);
     for (int seat = 0; seat < MAX_SEATS; seat++) SetRectEmpty(&g_seatDraw[seat]);
-    for (int seat = 0; seat < g_seatCount; seat++, y += cardH + S(8)) {
+    for (int seat = 0; seat < g_seatCount; seat++, y += cardH + gap) {
         WCHAR label[40];
         COLORREF color = SEAT_COLORS[seat];
         BOOL ready = seat_ready(seat);
         RECT card = { area.left, y, area.right, y + cardH };
         g_seatDraw[seat] = card;
         box(dc, card, S(10), COL_PANEL, COL_LINE, 1);
-        RECT stripe = { card.left + 1, card.top + S(10), card.left + S(6), card.bottom - S(10) };
+        BOOL small = cardH < S(60);
+        int pad = small ? S(5) : S(10), top = small ? (cardH - S(24)) / 2 : S(8);
+        RECT stripe = { card.left + 1, card.top + pad, card.left + S(6), card.bottom - pad };
         fill(dc, &stripe, color);
 
-        RECT name = { card.left + S(16), card.top + S(8), card.right - S(110), card.top + S(32) };
-        RECT state = { card.right - S(120), card.top + S(8), card.right - S(12), card.top + S(32) };
+        RECT name = { card.left + S(16), card.top + top, card.right - S(110), card.top + top + S(24) };
+        RECT state = { card.right - S(120), card.top + top, card.right - S(12), card.top + top + S(24) };
         seat_label(seat, label, 40);
-        text(dc, g_fHead, color, name, DT_VCENTER | DT_SINGLELINE, label);
+        text(dc, small ? g_fBold : g_fHead, color, name, DT_VCENTER | DT_SINGLELINE, label);
         text(dc, g_fBold, ready ? COL_OK : COL_WARN, state, DT_RIGHT | DT_VCENTER | DT_SINGLELINE,
-             ready ? L"Ready" : L"Not complete");
+             seat > 0 && !(g_share[seat] & SHARE_ON) ? L"Switched off" : ready ? L"Ready" : small ? L"Needs a screen" : L"Not complete");
+        if (small) continue; /* details: click the card, or look at the lists on the left */
 
         struct { const WCHAR *word; BOOL yes; } parts[3] = {
             { L"Screen", seat_screens(seat) > 0 },
@@ -462,6 +479,7 @@ static void paint_seats(HDC dc)
             text(dc, g_fText, COL_TEXT, word, DT_VCENTER | DT_SINGLELINE, parts[p].word);
             if (!parts[p].yes && !missing) missing = parts[p].word;
         }
+        if (cardH < S(86)) continue;
         WCHAR who[120];
         RECT share = { card.left + S(16), card.top + S(62), card.right - S(12), card.top + S(82) };
         BOOL hover = g_hoverKind == HIT_SEAT && g_hoverIndex == seat;
@@ -470,6 +488,7 @@ static void paint_seats(HDC dc)
         text(dc, hover ? g_fBold : g_fText, seat > 0 && !(g_share[seat] & SHARE_ON) ? COL_WARN : COL_TEXT, share,
              DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS, who);
 
+        if (cardH < S(112)) continue;
         RECT tip = { card.left + S(16), card.top + S(88), card.right - S(12), card.bottom - S(6) };
         WCHAR tipText[90];
         if (ready && seat > 0 && missing)
@@ -521,10 +540,11 @@ static void paint(HDC dc)
 
 static int hit_test(POINT pt, int *index)
 {
+    BOOL inList = pt.y >= g_rcScreens.top + S(64) && pt.y < g_rcScreens.bottom - S(8); /* rows scrolled out of view do not count */
     for (int i = 0; i < g_idleCount; i++)
-        if (PtInRect(&g_idleRow[i], pt)) { *index = i; return HIT_IDLE; }
+        if (inList && PtInRect(&g_idleRow[i], pt)) { *index = i; return HIT_IDLE; }
     for (int i = 0; i < g_screenCount; i++)
-        if (PtInRect(&g_screens[i].draw, pt) || PtInRect(&g_screenRow[i], pt)) { *index = i; return HIT_SCREEN; }
+        if (PtInRect(&g_screens[i].draw, pt) || (inList && PtInRect(&g_screenRow[i], pt))) { *index = i; return HIT_SCREEN; }
     RECT list = { g_rcDevices.left, g_rcDevices.top + S(59), g_rcDevices.right, g_rcDevices.bottom - S(3) };
     if (PtInRect(&list, pt))
         for (int i = 0; i < g_deviceCount; i++)
@@ -688,6 +708,19 @@ static INT_PTR CALLBACK sharing_proc(HWND dlg, UINT msg, WPARAM wp, LPARAM lp)
             }
             ShowWindow(GetDlgItem(dlg, IDC_SHARE_BASE + seat * 10 + 9), seat < g_seatCount ? SW_SHOW : SW_HIDE);
         }
+        /* Close the gap left by the rows that are not shown. */
+        RECT unit = { 0, 0, 0, 18 * (MAX_SEATS - g_seatCount) }, wr;
+        MapDialogRect(dlg, &unit);
+        int ids[3] = { IDC_SHARE_INFO, IDOK, IDCANCEL };
+        for (int i = 0; i < 3; i++) {
+            HWND c = GetDlgItem(dlg, ids[i]);
+            RECT r;
+            GetWindowRect(c, &r);
+            MapWindowPoints(NULL, dlg, (POINT *)&r, 2);
+            SetWindowPos(c, NULL, r.left, r.top - unit.bottom, 0, 0, SWP_NOSIZE | SWP_NOZORDER);
+        }
+        GetWindowRect(dlg, &wr);
+        SetWindowPos(dlg, NULL, 0, 0, wr.right - wr.left, wr.bottom - wr.top - unit.bottom, SWP_NOMOVE | SWP_NOZORDER);
         return TRUE;
     }
     if (msg != WM_COMMAND) return FALSE;
@@ -897,11 +930,19 @@ static LRESULT CALLBACK wnd_proc(HWND wnd, UINT msg, WPARAM wp, LPARAM lp)
         }
         return 0;
     }
-    case WM_MOUSEWHEEL:
+    case WM_MOUSEWHEEL: {
+        POINT at = { GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
+        ScreenToClient(wnd, &at);
+        if (PtInRect(&g_rcScreens, at)) {
+            g_screenScroll -= GET_WHEEL_DELTA_WPARAM(wp) * S(SCREEN_ROW_H) / WHEEL_DELTA;
+            InvalidateRect(wnd, &g_rcScreens, FALSE);
+            return 0;
+        }
         g_scroll -= GET_WHEEL_DELTA_WPARAM(wp) * S(ROW_H) / WHEEL_DELTA;
         layout();
         InvalidateRect(wnd, &g_rcDevices, FALSE);
         return 0;
+    }
     case WM_INPUT:
         on_raw_input((HRAWINPUT)lp);
         break; /* DefWindowProc must still clean up */

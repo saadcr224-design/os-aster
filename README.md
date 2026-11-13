@@ -159,7 +159,10 @@ keyboard and mouse, and signs in to their own Windows account.
   Services licences.
 - **The Interception input driver** (free for non-commercial use). OpenSeat
   offers to download and install it the first time; the PC must restart once.
-- One screen per workplace, plus a keyboard and mouse for each.
+- One screen per workplace, plus a keyboard and mouse for each. Up to
+  **10 workplaces** (the input driver handles at most 10 keyboards and 10
+  mice). The PC needs a video output for every screen, for example several
+  graphics cards or USB display adapters.
 
 ### How to use it
 

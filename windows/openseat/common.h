@@ -19,7 +19,7 @@
 #define MAX_SCREENS 16
 #define MAX_DEVICES 48
 #define MAX_HANDLES 8
-#define MAX_SEATS 4
+#define MAX_SEATS 10 /* also the driver's limit: 10 keyboards and 10 mice */
 #define NOT_USED (-1)
 #define HWID_CHARS 800
 #define ACCOUNT_CHARS 64

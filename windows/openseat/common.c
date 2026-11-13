@@ -494,8 +494,10 @@ static BOOL test_screens(void)
         if (swscanf(part, L"%ld,%ld,%ld,%ld", &s->area.left, &s->area.top, &s->area.right, &s->area.bottom) == 4) {
             s->primary = g_screenCount == 0;
             _snwprintf(s->key, 300, L"test-screen-%d", g_screenCount + 1);
-            lstrcpynW(s->name, g_screenCount == 0 ? L"DELL U2419H" : L"SAMSUNG TV", 64);
-            lstrcpynW(s->connector, g_screenCount == 0 ? L"DisplayPort" : L"HDMI", 24);
+            static const WCHAR *names[] = { L"DELL U2419H", L"SAMSUNG TV", L"LG 24MK430", L"HP V22", L"ACER K242" };
+            static const WCHAR *plugs[] = { L"DisplayPort", L"HDMI", L"VGA", L"HDMI", L"DVI" };
+            lstrcpynW(s->name, names[g_screenCount % 5], 64);
+            lstrcpynW(s->connector, plugs[g_screenCount % 5], 24);
             g_screenCount++;
         }
         part = next;
