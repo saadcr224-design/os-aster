@@ -149,11 +149,16 @@ python3 -m unittest
 
 **VISION** turns one Windows PC into several workplaces. Each person gets
 their own screen, keyboard and mouse. Install it with
-[`download/VISION-Setup.exe`](download/VISION-Setup.exe): the setup adds
+[`docs/download/VISION-Setup.exe`](docs/download/VISION-Setup.exe): the setup adds
 VISION to the Start menu and desktop and can be removed again from Windows'
-"Apps" list. (`download/VISION.exe` is the same program without an installer.)
+"Apps" list. (`docs/download/VISION.exe` is the same program without an installer.)
 
 ![VISION for Windows](docs/windows.png)
+
+The website for VISION is in [`docs/`](docs/index.html): one page with the
+download button, features, requirements and questions. It is plain HTML with
+no build step, so it can be put online with GitHub Pages (Settings, Pages,
+"Deploy from a branch", folder `/docs`) or any other web host.
 
 ### What you need
 

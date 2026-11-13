@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>VISION: several workplaces on one PC</title>
+<meta name="description" content="VISION turns one Windows PC into several workplaces. Each person gets their own screen, keyboard and mouse.">
+<link rel="icon" href="favicon.ico">
+<style>
+:root {
+  --bg: #f5f7fb; --panel: #ffffff; --line: #dfe4ee; --text: #131a2b; --muted: #58627a;
+  --brand: #2148d6; --brand-2: #0aa6b4; --brand-text: #ffffff; --soft: #e8eefc;
+  --note-bg: #fff4d6; --note-text: #6b4700; --shadow: 0 10px 40px rgba(20, 40, 110, .12);
+  color-scheme: light dark;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0d1220; --panel: #151c2e; --line: #26304a; --text: #e9edf7; --muted: #9aa6c0;
+    --brand: #5d83ff; --brand-2: #2cc5d2; --brand-text: #08102a; --soft: #1a2542;
+    --note-bg: #3a2e10; --note-text: #f3cf7a; --shadow: 0 10px 40px rgba(0, 0, 0, .5);
+  }
+}
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 17px/1.6 "Segoe UI", system-ui, -apple-system, Roboto, sans-serif; }
+a { color: var(--brand); }
+.wrap { max-width: 1080px; margin: 0 auto; padding: 0 24px; }
+header { position: sticky; top: 0; z-index: 10; background: color-mix(in srgb, var(--bg) 88%, transparent); backdrop-filter: blur(10px); border-bottom: 1px solid var(--line); }
+header .wrap { display: flex; align-items: center; gap: 20px; height: 64px; }
+.brand { display: flex; align-items: center; gap: 10px; font-weight: 800; font-size: 21px; letter-spacing: .04em; text-decoration: none; color: var(--text); }
+.brand img { width: 36px; height: 36px; }
+nav { margin-left: auto; display: flex; gap: 22px; align-items: center; }
+nav a { color: var(--muted); text-decoration: none; font-size: 15px; }
+nav a:hover { color: var(--text); }
+.btn { display: inline-flex; align-items: center; gap: 10px; background: linear-gradient(135deg, var(--brand), var(--brand-2)); color: var(--brand-text) !important; text-decoration: none; font-weight: 700; padding: 14px 26px; border-radius: 12px; box-shadow: var(--shadow); }
+.btn:hover { filter: brightness(1.08); }
+.btn:focus-visible, a:focus-visible { outline: 3px solid var(--brand-2); outline-offset: 3px; }
+.btn.small { padding: 9px 16px; font-size: 15px; box-shadow: none; }
+.btn svg { width: 20px; height: 20px; }
+.hero { padding: 72px 0 40px; text-align: center; }
+.hero img.logo { width: 120px; height: 120px; filter: drop-shadow(0 12px 28px rgba(33, 72, 214, .35)); }
+h1 { font-size: clamp(34px, 6vw, 58px); line-height: 1.08; margin: 22px 0 14px; letter-spacing: -.02em; }
+.hero p.lead { font-size: clamp(18px, 2.4vw, 22px); color: var(--muted); max-width: 660px; margin: 0 auto 30px; }
+.meta { color: var(--muted); font-size: 14.5px; margin-top: 14px; }
+.shot { margin: 46px auto 0; max-width: 980px; border-radius: 16px; overflow: hidden; border: 1px solid var(--line); box-shadow: var(--shadow); background: var(--panel); }
+.shot img { display: block; width: 100%; height: auto; }
+section { padding: 64px 0; }
+h2 { font-size: clamp(26px, 3.6vw, 36px); margin: 0 0 10px; letter-spacing: -.01em; }
+.sub { color: var(--muted); margin: 0 0 34px; max-width: 680px; }
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 18px; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 16px; padding: 22px; }
+.card h3 { margin: 12px 0 6px; font-size: 19px; }
+.card p { margin: 0; color: var(--muted); font-size: 16px; }
+.ico { width: 44px; height: 44px; border-radius: 12px; background: var(--soft); color: var(--brand); display: grid; place-items: center; }
+.ico svg { width: 24px; height: 24px; }
+ol.steps { list-style: none; counter-reset: s; padding: 0; margin: 0; display: grid; gap: 14px; max-width: 760px; }
+ol.steps li { counter-increment: s; background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 16px 18px 16px 64px; position: relative; }
+ol.steps li::before { content: counter(s); position: absolute; left: 16px; top: 14px; width: 34px; height: 34px; border-radius: 50%; background: linear-gradient(135deg, var(--brand), var(--brand-2)); color: var(--brand-text); font-weight: 800; display: grid; place-items: center; }
+ol.steps b { display: block; }
+ol.steps span { color: var(--muted); font-size: 16px; }
+.note { background: var(--note-bg); color: var(--note-text); border-radius: 14px; padding: 16px 20px; margin: 0 0 24px; max-width: 760px; }
+table { border-collapse: collapse; width: 100%; max-width: 760px; background: var(--panel); border: 1px solid var(--line); border-radius: 14px; overflow: hidden; }
+th, td { text-align: left; padding: 13px 18px; border-bottom: 1px solid var(--line); vertical-align: top; }
+tr:last-child th, tr:last-child td { border-bottom: 0; }
+th { width: 34%; font-weight: 600; }
+td { color: var(--muted); }
+.download { text-align: center; background: var(--panel); border: 1px solid var(--line); border-radius: 22px; padding: 46px 24px; }
+.download img { width: 72px; height: 72px; }
+.download .alt { margin-top: 18px; font-size: 15px; color: var(--muted); }
+details { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px 18px; max-width: 760px; margin-bottom: 10px; }
+summary { cursor: pointer; font-weight: 600; }
+details p { color: var(--muted); margin: 10px 0 2px; }
+footer { border-top: 1px solid var(--line); padding: 28px 0 40px; color: var(--muted); font-size: 14.5px; }
+@media (max-width: 640px) {
+  nav a:not(.btn) { display: none; }
+  .hero { padding-top: 48px; }
+  section { padding: 44px 0; }
+  .wrap { padding: 0 16px; }
+  th { width: 42%; }
+}
+</style>
+</head>
+<body>
+<header>
+  <div class="wrap">
+    <a class="brand" href="#top"><img src="logo.svg" alt="">VISION</a>
+    <nav>
+      <a href="#features">Features</a>
+      <a href="#how">How it works</a>
+      <a href="#need">What you need</a>
+      <a href="#faq">Questions</a>
+      <a class="btn small" href="#download">Download</a>
+    </nav>
+  </div>
+</header>
+
+<main id="top">
+  <div class="wrap hero">
+    <img class="logo" src="logo.svg" alt="VISION logo">
+    <h1>One PC. Many workplaces.</h1>
+    <p class="lead">VISION lets several people use one Windows PC at the same time. Each person gets their own screen, keyboard and mouse, and their own separate desktop.</p>
+    <a class="btn" href="download/VISION-Setup.exe" download>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11M7 11l5 5 5-5M5 20h14"/></svg>
+      Download VISION for Windows
+    </a>
+    <div class="meta">Version 1.0.0 · Windows 64-bit · 0.5 MB · Free</div>
+    <div class="shot"><img src="screenshot.png" width="1052" height="726" alt="The VISION window: a list of connected screens, keyboards and mice, each given to a workplace"></div>
+  </div>
+
+  <section id="features">
+    <div class="wrap">
+      <h2>What VISION does</h2>
+      <p class="sub">Connect extra monitors, keyboards and mice to one computer, and give each set to a different person.</p>
+      <div class="grid">
+        <div class="card"><div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></svg></div>
+          <h3>Finds every screen</h3><p>Monitors, TVs and laptop displays connected by HDMI, VGA, DVI or DisplayPort appear in a list with their name. Plug one in and it shows up by itself.</p></div>
+        <div class="card"><div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10"/></svg></div>
+          <h3>Own keyboard and mouse</h3><p>A keyboard or mouse given to one workplace controls only that workplace. It never types or clicks in another one.</p></div>
+        <div class="card"><div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="8" height="8" rx="2"/><rect x="13" y="3" width="8" height="8" rx="2"/><rect x="3" y="13" width="8" height="8" rx="2"/><rect x="13" y="13" width="8" height="8" rx="2"/></svg></div>
+          <h3>Up to 10 workplaces</h3><p>Every workplace runs its own Windows desktop. People can do different work at the same time on the same PC.</p></div>
+        <div class="card"><div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg></div>
+          <h3>Private by default</h3><p>Programs, files and screen content of one workplace are not shown in another unless you allow it.</p></div>
+        <div class="card"><div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h10M18 7h2M4 17h2M10 17h10"/><circle cx="16" cy="7" r="2"/><circle cx="8" cy="17" r="2"/></svg></div>
+          <h3>One place for sharing</h3><p>A single panel decides what each workplace may do: copy and paste, a shared folder, sound, or switched off.</p></div>
+        <div class="card"><div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l4 4L19 6"/></svg></div>
+          <h3>Nothing to configure by hand</h3><p>No accounts to create and no settings files. Not sure which keyboard is which? Press a key on it and VISION shows you.</p></div>
+      </div>
+    </div>
+  </section>
+
+  <section id="how">
+    <div class="wrap">
+      <h2>How to use it</h2>
+      <p class="sub">Four steps from installing to working side by side.</p>
+      <ol class="steps">
+        <li><b>Install VISION</b><span>Run VISION-Setup.exe. It adds VISION to the Start menu and the desktop.</span></li>
+        <li><b>Connect the screens, keyboards and mice</b><span>Each one appears in VISION. A screen that is switched off gets a "Turn on" button.</span></li>
+        <li><b>Give them to workplaces</b><span>Press "Add a workplace", then use the button on each screen and device to choose its workplace.</span></li>
+        <li><b>Press "Start workplaces"</b><span>Each extra screen shows its own Windows desktop. Press Stop to end them; open programs come back next time.</span></li>
+      </ol>
+    </div>
+  </section>
+
+  <section id="need">
+    <div class="wrap">
+      <h2>What you need</h2>
+      <p class="sub">Please read this before you install.</p>
+      <p class="note"><b>Windows 10 and 11 allow only one person signed in at a time.</b> On those you can install VISION and set everything up, but running several people at once needs Windows Server.</p>
+      <table>
+        <tr><th>Windows</th><td>Windows Server 2016 or newer, 64-bit, to run several workplaces. Windows Server allows two extra people; more need Remote Desktop Services licences from Microsoft.</td></tr>
+        <tr><th>Screens</th><td>One per workplace. The PC needs a video output for each, for example extra graphics cards or USB display adapters.</td></tr>
+        <tr><th>Keyboards and mice</th><td>One of each per workplace, up to 10.</td></tr>
+        <tr><th>Input driver</th><td>The free Interception driver (non-commercial use). VISION offers to install it the first time; the PC restarts once.</td></tr>
+        <tr><th>Status</th><td>Early version. It has been tested in a Windows emulator but not yet on a real Windows Server PC, so try it on a spare PC first.</td></tr>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <div class="wrap">
+      <div class="download" id="download">
+        <img src="logo.svg" alt="">
+        <h2>Download VISION</h2>
+        <p class="sub" style="margin: 0 auto 26px">Version 1.0.0 for Windows 64-bit. Free and open source.</p>
+        <a class="btn" href="download/VISION-Setup.exe" download>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 4v11M7 11l5 5 5-5M5 20h14"/></svg>
+          Download VISION-Setup.exe
+        </a>
+        <p class="alt">Browser blocks the download? Get the <a href="download/VISION-Setup.zip" download>zip file</a> instead. No installer wanted? Get <a href="download/VISION.exe" download>VISION.exe</a> on its own.</p>
+      </div>
+    </div>
+  </section>
+
+  <section id="faq">
+    <div class="wrap">
+      <h2>Questions</h2>
+      <p class="sub"></p>
+      <details><summary>Windows says "Windows protected your PC". What do I do?</summary><p>VISION is not signed with a paid certificate yet, so Windows warns the first time. Click "More info", then "Run anyway".</p></details>
+      <details><summary>My second screen does not appear.</summary><p>Check the cable first. If the screen is connected but switched off, or shows the same picture as another screen, VISION lists it with a "Turn on" button. You can also press the Windows key + P and choose "Extend".</p></details>
+      <details><summary>Can people in different workplaces see each other's work?</summary><p>No. Each workplace is separate. Sharing only happens if you tick it in "Connections and sharing": copy and paste, a shared folder, or sound.</p></details>
+      <details><summary>What happens if VISION stops or crashes?</summary><p>All keyboards and mice go back to the main desktop, so the PC always stays usable.</p></details>
+      <details><summary>How do I remove VISION?</summary><p>Open Windows Settings, Apps, find VISION and choose Uninstall. It asks whether to also remove the hidden accounts it made for the workplaces.</p></details>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">VISION is free software under the MIT licence. It is an independent project and is not affiliated with any other multiseat product. The Interception driver is a separate project with its own licence.</div>
+</footer>
+</body>
+</html>

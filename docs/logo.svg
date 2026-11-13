@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#2148d6"/>
+      <stop offset="1" stop-color="#0aa6b4"/>
+    </linearGradient>
+    <clipPath id="iris"><circle cx="128" cy="128" r="43"/></clipPath>
+  </defs>
+  <rect x="8" y="8" width="240" height="240" rx="54" fill="url(#bg)"/>
+  <!-- the eye: one PC ... -->
+  <path d="M30 128 Q128 34 226 128 Q128 222 30 128 Z" fill="#ffffff"/>
+  <!-- ... seen as several separate workplaces -->
+  <circle cx="128" cy="128" r="52" fill="#0b1b45"/>
+  <g clip-path="url(#iris)">
+    <rect x="85" y="85" width="41" height="41" fill="#3f7bff"/>
+    <rect x="130" y="85" width="41" height="41" fill="#ff9838"/>
+    <rect x="85" y="130" width="41" height="41" fill="#35c27a"/>
+    <rect x="130" y="130" width="41" height="41" fill="#b06cf0"/>
+  </g>
+  <circle cx="128" cy="128" r="13" fill="#0b1b45"/>
+</svg>
