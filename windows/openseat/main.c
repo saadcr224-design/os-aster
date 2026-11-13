@@ -48,7 +48,7 @@ static WCHAR g_status[300] = L"";
 static int g_hoverKind, g_hoverIndex, g_menuKind, g_menuIndex, g_scroll;
 static RECT g_rcScreens, g_rcDevices, g_rcSeats, g_rcBar;
 static RECT g_seatDraw[MAX_SEATS];
-static RECT g_idleDraw; /* the "turn this screen on" bar */
+static RECT g_screenRow[MAX_SCREENS], g_idleRow[MAX_IDLE]; /* rows of the screen list */
 
 static int S(int v) { return MulDiv(v, g_dpi, 96); }
 static void share_summary(int seat, WCHAR *out, size_t chars);
@@ -109,6 +109,7 @@ static void changed(void)
 /* ---- layout -------------------------------------------------------------- */
 
 #define ROW_H 46
+#define SCREEN_ROW_H 34
 
 static int device_rows_height(void) { return g_deviceCount * S(ROW_H); }
 
@@ -119,7 +120,10 @@ static void layout(void)
     int margin = S(20), top = S(128), barH = S(60), sideW = S(310);
     int bottom = rc.bottom - barH - S(14);
     int leftW = rc.right - sideW - margin * 3;
-    int screensH = (bottom - top) * 37 / 100 + (g_idleCount > 0 ? S(44) : 0); /* room for the turn-on bar */
+    int screensH = (bottom - top) * 37 / 100;
+    int listH = S(56) + S(16) + (g_screenCount + g_idleCount) * S(SCREEN_ROW_H); /* room for every row of the screen list */
+    if (listH > screensH) screensH = listH;
+    if (screensH > (bottom - top) * 60 / 100) screensH = (bottom - top) * 60 / 100;
 
     SetRect(&g_rcBar, 0, rc.bottom - barH, rc.right, rc.bottom);
     SetRect(&g_rcScreens, margin, top, margin + leftW, top + screensH);
@@ -207,31 +211,81 @@ static void section_title(HDC dc, RECT area, int number, const WCHAR *title, con
     text(dc, g_fText, COL_MUTED, h, DT_SINGLELINE | DT_END_ELLIPSIS, hint);
 }
 
+/* The list of connected screens: one row each, with a button to choose its
+ * workplace.  Screens that are plugged in but off get a "Turn on" button. */
+static void paint_screen_list(HDC dc, RECT stage)
+{
+    RECT list = { stage.left + (stage.right - stage.left) * 36 / 100, stage.top + S(8), stage.right - S(10), stage.bottom - S(8) };
+    RECT divider = { list.left - S(6), stage.top + S(12), list.left - S(5), stage.bottom - S(12) };
+    fill(dc, &divider, RGB(236, 238, 241));
+    int saved = SaveDC(dc);
+    IntersectClipRect(dc, list.left, list.top, list.right, list.bottom);
+    int y = list.top;
+    for (int i = 0; i < MAX_SCREENS; i++) SetRectEmpty(&g_screenRow[i]);
+    for (int i = 0; i < MAX_IDLE; i++) SetRectEmpty(&g_idleRow[i]);
+
+    for (int i = 0; i < g_screenCount + g_idleCount; i++, y += S(SCREEN_ROW_H)) {
+        BOOL idle = i >= g_screenCount;
+        Screen *sc = idle ? NULL : &g_screens[i];
+        IdleScreen *id = idle ? &g_idle[i - g_screenCount] : NULL;
+        RECT row = { list.left, y, list.right, y + S(SCREEN_ROW_H) };
+        BOOL hover = idle ? (g_hoverKind == HIT_IDLE && g_hoverIndex == i - g_screenCount)
+                          : (g_hoverKind == HIT_SCREEN && g_hoverIndex == i);
+        COLORREF color = idle ? RGB(190, 120, 0) : seat_color(sc->seat);
+        WCHAR line[160], label[40], num[8];
+        if (idle) g_idleRow[i - g_screenCount] = row; else g_screenRow[i] = row;
+        if (hover) fill(dc, &row, idle ? RGB(255, 240, 200) : RGB(240, 244, 250));
+
+        RECT badgeRc = { row.left + S(6), y + S(6), row.left + S(28), y + S(SCREEN_ROW_H) - S(6) };
+        box(dc, badgeRc, S(6), idle ? COL_NOTE_BG : tint(color, 82), color, 1);
+        if (idle) lstrcpynW(num, L"+", 8); else _snwprintf(num, 8, L"%d", i + 1);
+        text(dc, g_fBold, color, badgeRc, DT_CENTER | DT_VCENTER | DT_SINGLELINE, num);
+
+        int pillW = S(124);
+        RECT pill = { row.right - pillW - S(4), y + S(5), row.right - S(4), y + S(SCREEN_ROW_H) - S(5) };
+        RECT nameRc = { row.left + S(36), y, pill.left - S(8), y + S(SCREEN_ROW_H) };
+        if (idle)
+            _snwprintf(line, 160, L"%ls%ls%ls  \x2014  %ls", id->name, id->connector[0] ? L" \x00B7 " : L"", id->connector,
+                       id->mirrored ? L"copy of another screen" : L"connected, not in use");
+        else
+            _snwprintf(line, 160, L"%ls%ls%ls  \x00B7  %ld \x00D7 %ld", sc->name[0] ? sc->name : L"Screen",
+                       sc->connector[0] ? L" \x00B7 " : L"", sc->connector,
+                       sc->area.right - sc->area.left, sc->area.bottom - sc->area.top);
+        line[159] = 0;
+        text(dc, g_fText, COL_TEXT, nameRc, DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS, line);
+
+        box(dc, pill, S(8), idle ? COL_NOTE_BG : tint(color, 86), color, 1);
+        RECT pillText = { pill.left + S(10), pill.top, pill.right - S(22), pill.bottom };
+        if (idle) lstrcpynW(label, L"Turn on", 40); else seat_label(sc->seat, label, 40);
+        if (idle) pillText.right = pill.right - S(10);
+        text(dc, idle ? g_fBold : g_fText, color, pillText, DT_VCENTER | DT_SINGLELINE | (idle ? DT_CENTER : 0), label);
+        if (!idle) {
+            POINT arrow[3] = { { pill.right - S(18), (pill.top + pill.bottom) / 2 - S(2) },
+                               { pill.right - S(10), (pill.top + pill.bottom) / 2 - S(2) },
+                               { pill.right - S(14), (pill.top + pill.bottom) / 2 + S(3) } };
+            HBRUSH brush = CreateSolidBrush(color);
+            HGDIOBJ oldBrush = SelectObject(dc, brush), oldPen = SelectObject(dc, GetStockObject(NULL_PEN));
+            Polygon(dc, arrow, 3);
+            SelectObject(dc, oldBrush);
+            SelectObject(dc, oldPen);
+            DeleteObject(brush);
+        }
+    }
+    if (g_screenCount + g_idleCount == 0) {
+        text(dc, g_fText, COL_MUTED, list, DT_CENTER | DT_VCENTER | DT_SINGLELINE, L"Connect a screen with a cable and it appears here.");
+    }
+    RestoreDC(dc, saved);
+}
+
 static void paint_screens(HDC dc)
 {
     RECT area = g_rcScreens, stage;
     section_title(dc, area, 1, L"Screens: monitors, TVs and laptop displays",
-                  L"Every screen connected by cable appears here. Click one to choose its workplace.");
+                  L"Every screen connected by cable is listed here. Use the button on its row to choose its workplace.");
     SetRect(&stage, area.left, area.top + S(56), area.right, area.bottom);
     box(dc, stage, S(10), COL_PANEL, COL_LINE, 1);
-    SetRectEmpty(&g_idleDraw);
-    if (g_idleCount > 0) {
-        /* A screen is plugged in but Windows is not using it separately yet. */
-        WCHAR msg[260];
-        BOOL hover = g_hoverKind == HIT_IDLE;
-        SetRect(&g_idleDraw, stage.left + S(10), stage.bottom - S(44), stage.right - S(10), stage.bottom - S(8));
-        box(dc, g_idleDraw, S(8), hover ? RGB(255, 232, 170) : COL_NOTE_BG, RGB(214, 150, 20), hover ? 2 : 1);
-        if (g_idleCount == 1)
-            _snwprintf(msg, 260, L"New screen found: %ls%ls%ls %ls.  Click here to turn it on.", g_idle[0].name,
-                       g_idle[0].connector[0] ? L" \x00B7 " : L"", g_idle[0].connector,
-                       g_idle[0].mirrored ? L"shows a copy of another screen" : L"is connected but not in use");
-        else
-            _snwprintf(msg, 260, L"%d more screens are connected but not in use.  Click here to turn them on.", g_idleCount);
-        msg[259] = 0;
-        RECT inner = { g_idleDraw.left + S(12), g_idleDraw.top, g_idleDraw.right - S(12), g_idleDraw.bottom };
-        text(dc, g_fBold, COL_NOTE_TX, inner, DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS, msg);
-        stage.bottom -= S(44);
-    }
+    paint_screen_list(dc, stage);
+    stage.right = stage.left + (stage.right - stage.left) * 36 / 100; /* the picture keeps the left part */
     if (g_screenCount == 0) {
         text(dc, g_fText, COL_MUTED, stage, DT_CENTER | DT_VCENTER | DT_SINGLELINE, L"No screens found.");
         return;
@@ -267,6 +321,10 @@ static void paint_screens(HDC dc)
         RECT mid = { r.left + S(4), r.top + h * 50 / 100, r.right - S(4), r.top + h * 70 / 100 };
         RECT low = { r.left + S(4), r.top + h * 70 / 100, r.right - S(4), r.bottom - S(4) };
         _snwprintf(line, 64, L"%d", i + 1);
+        if (h < S(84) || r.right - r.left < S(130)) { /* small picture: the number only, details are in the list */
+            text(dc, g_fHuge, color, r, DT_CENTER | DT_VCENTER | DT_SINGLELINE, line);
+            continue;
+        }
         text(dc, g_fHuge, color, big, DT_CENTER | DT_VCENTER | DT_SINGLELINE, line);
         seat_label(s->seat, label, 32);
         text(dc, g_fBold, color, mid, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS, label);
@@ -463,9 +521,10 @@ static void paint(HDC dc)
 
 static int hit_test(POINT pt, int *index)
 {
-    if (g_idleCount > 0 && PtInRect(&g_idleDraw, pt)) { *index = 0; return HIT_IDLE; }
+    for (int i = 0; i < g_idleCount; i++)
+        if (PtInRect(&g_idleRow[i], pt)) { *index = i; return HIT_IDLE; }
     for (int i = 0; i < g_screenCount; i++)
-        if (PtInRect(&g_screens[i].draw, pt)) { *index = i; return HIT_SCREEN; }
+        if (PtInRect(&g_screens[i].draw, pt) || PtInRect(&g_screenRow[i], pt)) { *index = i; return HIT_SCREEN; }
     RECT list = { g_rcDevices.left, g_rcDevices.top + S(59), g_rcDevices.right, g_rcDevices.bottom - S(3) };
     if (PtInRect(&list, pt))
         for (int i = 0; i < g_deviceCount; i++)
@@ -714,7 +773,7 @@ static void refresh_hardware(BOOL automatic)
     free(oldDevices);
     layout();
     if (automatic && g_idleCount > 0 && !moreScreens)
-        _snwprintf(g_status, 300, L"A screen was connected. Click the yellow bar above to turn it on.");
+        _snwprintf(g_status, 300, L"A screen was connected. Press Turn on in the screen list.");
     else if (automatic && moreScreens)
         _snwprintf(g_status, 300, L"New screen connected. Click it above to give it to a workplace.");
     else if (automatic && g_screenCount < oldS)
@@ -829,8 +888,10 @@ static LRESULT CALLBACK wnd_proc(HWND wnd, UINT msg, WPARAM wp, LPARAM lp)
         } else if (kind == HIT_SEAT) {
             edit_sharing();
         } else if (kind != HIT_NONE) {
-            RECT r = kind == HIT_SCREEN ? g_screens[index].draw : g_devices[index].draw;
-            POINT at = { kind == HIT_SCREEN ? r.left : r.right - S(144), r.bottom - (kind == HIT_SCREEN ? 0 : S(8)) };
+            BOOL inRow = kind == HIT_SCREEN && PtInRect(&g_screenRow[index], pt);
+            RECT r = inRow ? g_screenRow[index] : kind == HIT_SCREEN ? g_screens[index].draw : g_devices[index].draw;
+            POINT at = { inRow ? r.right - S(128) : kind == HIT_SCREEN ? r.left : r.right - S(144),
+                         r.bottom - (kind == HIT_SCREEN && !inRow ? 0 : S(inRow ? 5 : 8)) };
             ClientToScreen(wnd, &at);
             choose_seat(kind, index, at);
         }
