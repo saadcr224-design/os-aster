@@ -9,7 +9,7 @@ and contains no code from, ASTER or IBIK.
 | Part | Status |
 | --- | --- |
 | **Linux** (`openseat`) | Working command-line tool and graphical interface. Tested against simulated hardware; not yet run on a real multi-GPU PC. |
-| **Windows** (`windows/openseat/`) | `OpenSeat.exe`: sets up and runs extra workplaces. Needs Windows Server and the free Interception driver. Tested under Wine, **not yet on a real Windows PC**. |
+| **Windows** (`windows/openseat/`, `windows/installer/`) | **VISION**, with an installer: sets up and runs extra workplaces. Needs Windows Server and the free Interception driver. Tested under Wine, **not yet on a real Windows PC**. |
 
 ## Linux
 
@@ -143,13 +143,17 @@ devices = ["pci:0000:01:00.0", "hub:1-3"]
 python3 -m unittest
 ```
 
-## Windows
+## Windows: VISION
 
-`windows/openseat/` builds **OpenSeat.exe**, one program that sets up and runs
-several workplaces on one Windows PC. Each person gets their own screen,
-keyboard and mouse, and signs in to their own Windows account.
+<img src="docs/vision-logo.png" width="96" alt="VISION logo">
 
-![OpenSeat for Windows](docs/windows.png)
+**VISION** turns one Windows PC into several workplaces. Each person gets
+their own screen, keyboard and mouse. Install it with
+[`download/VISION-Setup.exe`](download/VISION-Setup.exe): the setup adds
+VISION to the Start menu and desktop and can be removed again from Windows'
+"Apps" list. (`download/VISION.exe` is the same program without an installer.)
+
+![VISION for Windows](docs/windows.png)
 
 ### What you need
 
@@ -157,7 +161,7 @@ keyboard and mouse, and signs in to their own Windows account.
   signed in at a time, so they cannot run extra workplaces. Windows Server
   allows two extra people without extra licences; more need Remote Desktop
   Services licences.
-- **The Interception input driver** (free for non-commercial use). OpenSeat
+- **The Interception input driver** (free for non-commercial use). VISION
   offers to download and install it the first time; the PC must restart once.
 - One screen per workplace, plus a keyboard and mouse for each. Up to
   **10 workplaces** (the input driver handles at most 10 keyboards and 10
@@ -166,7 +170,7 @@ keyboard and mouse, and signs in to their own Windows account.
 
 ### How to use it
 
-1. Run `OpenSeat.exe`. Every connected monitor, TV or laptop display appears
+1. Run `VISION.exe`. Every connected monitor, TV or laptop display appears
    under **Screens**, with its name and plug type (HDMI, VGA, ...). A screen
    plugged in later appears by itself. Each screen has its own row in the
    screen list with a button to choose its workplace. A screen that is
@@ -175,11 +179,11 @@ keyboard and mouse, and signs in to their own Windows account.
 2. Press **Add a workplace**, then use the button on a screen's row and choose
    Workplace 2.
 3. Optionally click each keyboard and mouse and choose its workplace. If you
-   skip this, OpenSeat asks at start: press a key and click on each
+   skip this, VISION asks at start: press a key and click on each
    workplace's screen.
 4. Press **Start workplaces** and allow administrator permission.
 
-There is no account to create: OpenSeat makes a hidden Windows account for
+There is no account to create: VISION makes a hidden Windows account for
 each workplace and signs it in by itself.
 
 A small window shows each workplace's state. **Stop** (or Ctrl+Alt+Shift+S on
@@ -196,7 +200,7 @@ that decides what each workplace may do:
 | --- | --- |
 | Switched on | The workplace starts with Start workplaces |
 | Copy and paste | Text can be copied between it and Workplace 1 |
-| Shared folder | It may open `C:\Users\Public\OpenSeat Shared` |
+| Shared folder | It may open `C:\Users\Public\VISION Shared` |
 | Sound | It may play sound on the PC's speakers |
 
 Anything not ticked stays private. Changes apply the next time the workplaces
@@ -207,12 +211,12 @@ keep private files inside your own user folder.
 
 - Each extra workplace is a Remote Desktop session on this same PC, shown full
   screen on its monitor.
-- The Interception driver tells OpenSeat which keyboard or mouse every input
+- The Interception driver tells VISION which keyboard or mouse every input
   comes from. Workplace 1's input passes through unchanged. Other workplaces'
-  input is sent to a small OpenSeat helper inside that workplace's session.
+  input is sent to a small VISION helper inside that workplace's session.
 - Workplace 1's pointer is kept on its own screens, and the other workplaces'
   windows cannot be typed into from workplace 1.
-- If OpenSeat stops or crashes, all input goes back to the main desktop.
+- If VISION stops or crashes, all input goes back to the main desktop.
 
 ### Limits
 
@@ -220,7 +224,7 @@ keep private files inside your own user folder.
 - If workplace 1 locks the PC (Win+L), the other screens are hidden until it
   is unlocked.
 - 3D-heavy programs and games run slower in the extra workplaces.
-- OpenSeat.exe is not code-signed, so Windows SmartScreen warns the first time.
+- VISION.exe is not code-signed, so Windows SmartScreen warns the first time.
 
 ### Testing status
 
@@ -231,10 +235,10 @@ tested on a real Windows Server PC.** The workplace sign-in, the automatic
 hidden accounts, the shared-folder permissions, the screen names and the
 driver installation can only be checked there.
 
-Build it yourself (needs MinGW-w64):
+Build the program and the installer yourself (needs MinGW-w64 and NSIS):
 
 ```bash
-windows/openseat/build.sh
+windows/installer/build-installer.sh
 ```
 
 ## License

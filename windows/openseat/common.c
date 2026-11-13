@@ -25,7 +25,7 @@ void setup_dir(WCHAR *out, size_t chars)
     WCHAR base[MAX_PATH];
     if (!GetEnvironmentVariableW(L"APPDATA", base, MAX_PATH))
         lstrcpynW(base, L".", MAX_PATH);
-    _snwprintf(out, chars, L"%ls\\OpenSeat", base);
+    _snwprintf(out, chars, L"%ls\\VISION", base);
     out[chars - 1] = 0;
     CreateDirectoryW(out, NULL);
 }
@@ -74,8 +74,8 @@ void load_setup(void)
     for (int s = 0; s < MAX_SEATS; s++) {
         WCHAR name[24];
         _snwprintf(name, 24, L"Workplace%d", s + 1);
-        /* The person never sees or types these: OpenSeat makes them itself. */
-        _snwprintf(g_accounts[s], ACCOUNT_CHARS, L"OpenSeat%d", s + 1);
+        /* The person never sees or types these: VISION makes them itself. */
+        _snwprintf(g_accounts[s], ACCOUNT_CHARS, L"VISION%d", s + 1);
         g_share[s] = (int)GetPrivateProfileIntW(L"Sharing", name, SHARE_DEFAULT, path) & 15;
     }
 }
@@ -594,7 +594,7 @@ void shared_folder(WCHAR *out, size_t chars)
 {
     WCHAR pub[MAX_PATH];
     if (!GetEnvironmentVariableW(L"PUBLIC", pub, MAX_PATH)) lstrcpynW(pub, L"C:\\Users\\Public", MAX_PATH);
-    _snwprintf(out, chars, L"%ls\\OpenSeat Shared", pub);
+    _snwprintf(out, chars, L"%ls\\VISION Shared", pub);
     out[chars - 1] = 0;
 }
 

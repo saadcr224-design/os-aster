@@ -1,5 +1,5 @@
 /*
- * OpenSeat for Windows - plan who uses which screen, keyboard and mouse.
+ * VISION for Windows - plan who uses which screen, keyboard and mouse.
  *
  * This program lets you divide the screens, keyboards and mice of one PC
  * between several "workplaces" and saves that plan.  It does NOT yet run the
@@ -510,9 +510,13 @@ static void paint(HDC dc)
 
     RECT head = { 0, 0, rc.right, S(78) };
     fill(dc, &head, COL_PANEL);
-    RECT title = { S(20), S(10), rc.right - S(20), S(44) };
-    RECT sub = { S(20), S(46), rc.right - S(20), S(70) };
-    text(dc, g_fTitle, COL_TEXT, title, DT_VCENTER | DT_SINGLELINE, g_demo ? L"Set up workplaces  (demo)" : L"Set up workplaces");
+    /* The logo, then the name and what this window is for. */
+    static HICON logo;
+    if (!logo) logo = LoadImageW(GetModuleHandleW(NULL), MAKEINTRESOURCEW(1), IMAGE_ICON, S(52), S(52), 0);
+    if (logo) DrawIconEx(dc, S(18), S(13), logo, S(52), S(52), 0, NULL, DI_NORMAL);
+    RECT title = { S(82), S(10), rc.right - S(20), S(44) };
+    RECT sub = { S(82), S(46), rc.right - S(20), S(70) };
+    text(dc, g_fTitle, COL_TEXT, title, DT_VCENTER | DT_SINGLELINE, g_demo ? L"VISION  \x00B7  Set up workplaces  (demo)" : L"VISION  \x00B7  Set up workplaces");
     text(dc, g_fText, COL_MUTED, sub, DT_SINGLELINE | DT_END_ELLIPSIS,
          L"Several people can share this PC. Give each person a screen, a keyboard and a mouse.");
 
@@ -667,10 +671,10 @@ static void demo_find_tick(void)
 static BOOL confirm_close(void)
 {
     if (!g_dirty) return TRUE;
-    int answer = MessageBoxW(g_wnd, L"Save your changes before closing?", L"OpenSeat", MB_YESNOCANCEL | MB_ICONQUESTION);
+    int answer = MessageBoxW(g_wnd, L"Save your changes before closing?", L"VISION", MB_YESNOCANCEL | MB_ICONQUESTION);
     if (answer == IDCANCEL) return FALSE;
     if (answer == IDYES && !save_all()) {
-        MessageBoxW(g_wnd, L"The setup could not be saved.", L"OpenSeat", MB_OK | MB_ICONERROR);
+        MessageBoxW(g_wnd, L"The setup could not be saved.", L"VISION", MB_OK | MB_ICONERROR);
         return FALSE;
     }
     return TRUE;
@@ -757,7 +761,7 @@ static void start_workplaces(void)
         if (msg[0]) { set_status(msg); MessageBeep(MB_ICONWARNING); return; }
     }
     if (g_dirty && !save_all()) {
-        MessageBoxW(g_wnd, L"The setup could not be saved.", L"OpenSeat", MB_OK | MB_ICONERROR);
+        MessageBoxW(g_wnd, L"The setup could not be saved.", L"VISION", MB_OK | MB_ICONERROR);
         return;
     }
     WCHAR self[MAX_PATH];
@@ -773,7 +777,7 @@ static void start_workplaces(void)
     if (ShellExecuteExW(&info)) {
         set_status(L"Starting the workplaces\x2026 Follow the instructions on each screen.");
     } else {
-        set_status(GetLastError() == ERROR_CANCELLED ? L"Start was cancelled: OpenSeat needs administrator permission."
+        set_status(GetLastError() == ERROR_CANCELLED ? L"Start was cancelled: VISION needs administrator permission."
                                                      : L"Could not start the workplaces.");
     }
     update_buttons();
@@ -998,7 +1002,7 @@ static LRESULT CALLBACK wnd_proc(HWND wnd, UINT msg, WPARAM wp, LPARAM lp)
             return 0;
         case ID_SAVE:
             if (save_all()) set_status(L"Saved.");
-            else MessageBoxW(wnd, L"The setup could not be saved.", L"OpenSeat", MB_OK | MB_ICONERROR);
+            else MessageBoxW(wnd, L"The setup could not be saved.", L"VISION", MB_OK | MB_ICONERROR);
             update_buttons();
             InvalidateRect(wnd, NULL, FALSE);
             return 0;
@@ -1039,13 +1043,13 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE prev, PWSTR cmd, int show)
     cls.hInstance = inst;
     cls.hCursor = LoadCursorW(NULL, IDC_ARROW);
     cls.hIcon = LoadIconW(inst, MAKEINTRESOURCEW(1));
-    cls.lpszClassName = L"OpenSeatMain";
+    cls.lpszClassName = L"VISIONMain";
     if (!RegisterClassExW(&cls)) return 1;
 
     HDC screen = GetDC(NULL);
     int dpi = GetDeviceCaps(screen, LOGPIXELSY);
     ReleaseDC(NULL, screen);
-    HWND wnd = CreateWindowExW(0, cls.lpszClassName, L"OpenSeat", WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN,
+    HWND wnd = CreateWindowExW(0, cls.lpszClassName, L"VISION", WS_OVERLAPPEDWINDOW | WS_CLIPCHILDREN,
                                CW_USEDEFAULT, CW_USEDEFAULT, MulDiv(1060, dpi, 96), MulDiv(760, dpi, 96),
                                NULL, NULL, inst, NULL);
     if (!wnd) return 1;

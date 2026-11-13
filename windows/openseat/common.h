@@ -52,7 +52,7 @@ extern Screen g_screens[MAX_SCREENS];
 extern Device g_devices[MAX_DEVICES];
 extern int g_screenCount, g_deviceCount, g_seatCount;
 extern BOOL g_demo;
-extern WCHAR g_accounts[MAX_SEATS][ACCOUNT_CHARS]; /* hidden Windows account OpenSeat makes per workplace; [0] unused */
+extern WCHAR g_accounts[MAX_SEATS][ACCOUNT_CHARS]; /* hidden Windows account VISION makes per workplace; [0] unused */
 
 /* What each extra workplace is allowed to do; everything else stays private. */
 enum {
@@ -101,7 +101,7 @@ void remember_seat(int device, const WCHAR *hwid, int seat);
 
 /* ---- pipe protocol between controller and agents ------------------------ */
 
-#define OPENSEAT_PIPE L"\\\\.\\pipe\\OpenSeat.Input.v1"
+#define OPENSEAT_PIPE L"\\\\.\\pipe\\VISION.Input.v1"
 #define EVENT_MAGIC 0x4F534531u /* "OSE1" */
 
 enum { EVENT_KEY = 1, EVENT_MOUSE = 2 };

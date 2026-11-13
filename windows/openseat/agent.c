@@ -29,7 +29,7 @@ int run_agent(HINSTANCE inst, BOOL test)
     (void)inst;
     char logPath[MAX_PATH];
     if (!test && !GetSystemMetrics(SM_REMOTESESSION)) return 0;
-    HANDLE single = CreateMutexW(NULL, TRUE, L"Local\\OpenSeat.Agent");
+    HANDLE single = CreateMutexW(NULL, TRUE, L"Local\\VISION.Agent");
     if (GetLastError() == ERROR_ALREADY_EXISTS) return 0;
     if (test && GetEnvironmentVariableA("OPENSEAT_TEST_AGENT_LOG", logPath, MAX_PATH)) g_log = fopen(logPath, "a");
 

@@ -9,7 +9,7 @@
  *     mouse every key press and movement comes from.  Input from workplace 1's
  *     devices passes through untouched.  Input from another workplace's
  *     devices is taken out of the main desktop and sent over a pipe to
- *     OpenSeat's agent inside that workplace's session, which replays it.
+ *     VISION's agent inside that workplace's session, which replays it.
  *   - The mstsc windows are disabled, so workplace 1's keyboard and mouse can
  *     never reach them, and workplace 1's pointer is kept on its own screens.
  *
@@ -115,7 +115,7 @@ static int S(int v) { return MulDiv(v, g_dpi, 96); }
 
 static void say(const WCHAR *text, UINT icon)
 {
-    MessageBoxW(g_main, text, L"OpenSeat", MB_OK | icon | MB_SETFOREGROUND);
+    MessageBoxW(g_main, text, L"VISION", MB_OK | icon | MB_SETFOREGROUND);
 }
 
 static void set_state(int seat, const WCHAR *fmt, ...)
@@ -398,7 +398,7 @@ static void show_prompt(int seat)
 {
     RECT a = g_screens[g_seat[seat].screen].area;
     if (!g_prompt)
-        g_prompt = CreateWindowExW(WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE, L"OpenSeatPrompt", L"OpenSeat: choose keyboard and mouse", WS_POPUP,
+        g_prompt = CreateWindowExW(WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE, L"VISIONPrompt", L"VISION: choose keyboard and mouse", WS_POPUP,
                                    0, 0, 10, 10, NULL, NULL, GetModuleHandleW(NULL), NULL);
     SetWindowPos(g_prompt, HWND_TOPMOST, a.left, a.top, a.right - a.left, a.bottom - a.top, SWP_NOACTIVATE | SWP_SHOWWINDOW);
     InvalidateRect(g_prompt, NULL, TRUE);
@@ -601,7 +601,7 @@ static BOOL save_password(int seat, const WCHAR *password)
     return CredWriteW(&c, 0);
 }
 
-/* A long random password nobody has to know: OpenSeat signs the workplace in itself. */
+/* A long random password nobody has to know: VISION signs the workplace in itself. */
 static BOOL make_password(WCHAR *out, size_t chars)
 {
     static const WCHAR alphabet[] = L"ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789";
@@ -615,25 +615,25 @@ static BOOL make_password(WCHAR *out, size_t chars)
 }
 
 /* Each workplace runs in its own hidden Windows account, made and signed in
- * by OpenSeat.  The person at the PC never creates or types one. */
+ * by VISION.  The person at the PC never creates or types one. */
 static BOOL ensure_account(int seat, WCHAR *problem, size_t chars)
 {
     USER_INFO_1 *info = NULL;
-    WCHAR password[64], full[40], comment[] = L"Workplace account made by OpenSeat";
+    WCHAR password[64], full[40], comment[] = L"Workplace account made by VISION";
     WCHAR *name = g_accounts[seat];
     BOOL haveSaved = read_password(seat, password, 64);
     SecureZeroMemory(password, sizeof(password));
 
     NET_API_STATUS st = NetUserGetInfo(NULL, name, 1, (LPBYTE *)&info);
     if (st == NERR_Success) {
-        BOOL ours = info->usri1_comment && wcsstr(info->usri1_comment, L"OpenSeat") != NULL;
+        BOOL ours = info->usri1_comment && wcsstr(info->usri1_comment, L"VISION") != NULL;
         NetApiBufferFree(info);
         if (!ours) {
-            _snwprintf(problem, chars, L"This PC already has a Windows account called \"%ls\" that OpenSeat did not make. "
+            _snwprintf(problem, chars, L"This PC already has a Windows account called \"%ls\" that VISION did not make. "
                                        L"Rename or remove it, then start again.", name);
             return FALSE;
         }
-        if (!haveSaved) { /* e.g. another administrator starts OpenSeat for the first time */
+        if (!haveSaved) { /* e.g. another administrator starts VISION for the first time */
             USER_INFO_1003 set;
             if (!make_password(password, 64)) goto failed;
             set.usri1003_password = password;
@@ -666,7 +666,7 @@ static BOOL ensure_account(int seat, WCHAR *problem, size_t chars)
 
 failed:
     SecureZeroMemory(password, sizeof(password));
-    _snwprintf(problem, chars, L"OpenSeat could not prepare Workplace %d (Windows error %lu).", seat + 1, (unsigned long)st);
+    _snwprintf(problem, chars, L"VISION could not prepare Workplace %d (Windows error %lu).", seat + 1, (unsigned long)st);
     return FALSE;
 
 group:;
@@ -695,9 +695,9 @@ static BOOL install_files(WCHAR *problem, size_t chars)
     WCHAR self[MAX_PATH], target[MAX_PATH], run[MAX_PATH + 16];
     GetModuleFileNameW(NULL, self, MAX_PATH);
     CreateDirectoryW(g_installDir, NULL);
-    _snwprintf(target, MAX_PATH, L"%ls\\OpenSeat.exe", g_installDir);
+    _snwprintf(target, MAX_PATH, L"%ls\\VISION.exe", g_installDir);
     if (lstrcmpiW(self, target) != 0 && !CopyFileW(self, target, FALSE) && GetFileAttributesW(target) == INVALID_FILE_ATTRIBUTES) {
-        _snwprintf(problem, chars, L"Could not copy OpenSeat to %ls (error %lu).", g_installDir, GetLastError());
+        _snwprintf(problem, chars, L"Could not copy VISION to %ls (error %lu).", g_installDir, GetLastError());
         return FALSE;
     }
     if (lstrcmpiW(g_exeDir, g_installDir) != 0) {
@@ -707,17 +707,17 @@ static BOOL install_files(WCHAR *problem, size_t chars)
         if (GetFileAttributesW(from) != INVALID_FILE_ATTRIBUTES) CopyFileW(from, to, FALSE);
     }
     /* The agent starts in every Windows session and quits at once unless it is
-     * one of OpenSeat's workplaces. */
+     * one of VISION's workplaces. */
     _snwprintf(run, MAX_PATH + 16, L"\"%ls\" --agent", target);
-    if (RegSetKeyValueW(HKEY_LOCAL_MACHINE, L"Software\\Microsoft\\Windows\\CurrentVersion\\Run", L"OpenSeatAgent",
+    if (RegSetKeyValueW(HKEY_LOCAL_MACHINE, L"Software\\Microsoft\\Windows\\CurrentVersion\\Run", L"VISIONAgent",
                         REG_SZ, run, (DWORD)((wcslen(run) + 1) * sizeof(WCHAR))) != ERROR_SUCCESS) {
-        _snwprintf(problem, chars, L"Could not register the OpenSeat helper to start with Windows.");
+        _snwprintf(problem, chars, L"Could not register the VISION helper to start with Windows.");
         return FALSE;
     }
     /* Allow Remote Desktop sign-ins (the extra workplaces use them on this PC only). */
     set_dword(HKEY_LOCAL_MACHINE, L"SYSTEM\\CurrentControlSet\\Control\\Terminal Server", L"fDenyTSConnections", 0);
     /* Local accounts sign in with NTLM, and Windows only uses a saved password
-     * for that when policy allows it.  Allow it for OpenSeat's own addresses only. */
+     * for that when policy allows it.  Allow it for VISION's own addresses only. */
     const WCHAR *deleg = L"SOFTWARE\\Policies\\Microsoft\\Windows\\CredentialsDelegation";
     WCHAR list[160];
     _snwprintf(list, 160, L"%ls\\AllowSavedCredentialsWhenNTLMOnly", deleg);
@@ -833,7 +833,7 @@ static void paint_status(HWND wnd, HDC dc)
     RECT t = { S(20), S(14), rc.right - S(20), S(48) };
     SelectObject(dc, g_fHead);
     SetTextColor(dc, RGB(28, 32, 38));
-    DrawTextW(dc, g_test ? L"OpenSeat is running (test mode)" : L"OpenSeat is running", -1, &t, DT_SINGLELINE | DT_VCENTER);
+    DrawTextW(dc, g_test ? L"VISION is running (test mode)" : L"VISION is running", -1, &t, DT_SINGLELINE | DT_VCENTER);
 
     int y = S(56);
     SelectObject(dc, g_fText);
@@ -897,8 +897,8 @@ static LRESULT CALLBACK status_proc(HWND wnd, UINT msg, WPARAM wp, LPARAM lp)
         return 0;
     case WM_FATAL:
         stop_all();
-        say(wp == 2 ? L"OpenSeat is already running, or another program is using its connection name."
-                    : L"OpenSeat could not set up its connection for the workplaces.", MB_ICONERROR);
+        say(wp == 2 ? L"VISION is already running, or another program is using its connection name."
+                    : L"VISION could not set up its connection for the workplaces.", MB_ICONERROR);
         DestroyWindow(wnd);
         return 0;
     case WM_HOTKEY:
@@ -910,7 +910,7 @@ static LRESULT CALLBACK status_proc(HWND wnd, UINT msg, WPARAM wp, LPARAM lp)
         break;
     case WM_CLOSE:
         if (MessageBoxW(wnd, L"Stop all extra workplaces?\n\nPeople there are disconnected; their open programs keep running and come back next time.",
-                        L"OpenSeat", MB_YESNO | MB_ICONQUESTION) == IDYES)
+                        L"VISION", MB_YESNO | MB_ICONQUESTION) == IDYES)
             DestroyWindow(wnd);
         return 0;
     case WM_DESTROY:
@@ -1001,15 +1001,15 @@ int run_controller(HINSTANCE inst, BOOL test)
     if (!GetEnvironmentVariableW(L"ProgramW6432", programFiles, MAX_PATH) &&
         !GetEnvironmentVariableW(L"ProgramFiles", programFiles, MAX_PATH))
         lstrcpynW(programFiles, L"C:\\Program Files", MAX_PATH);
-    _snwprintf(g_installDir, MAX_PATH, L"%ls\\OpenSeat", programFiles);
+    _snwprintf(g_installDir, MAX_PATH, L"%ls\\VISION", programFiles);
 
-    HANDLE single = CreateMutexW(NULL, TRUE, L"Global\\OpenSeat.Controller");
+    HANDLE single = CreateMutexW(NULL, TRUE, L"Global\\VISION.Controller");
     if (GetLastError() == ERROR_ALREADY_EXISTS) {
-        say(L"OpenSeat is already running. Look for its window on workplace 1's screen.", MB_ICONINFORMATION);
+        say(L"VISION is already running. Look for its window on workplace 1's screen.", MB_ICONINFORMATION);
         return 0;
     }
     if (!test && !is_elevated()) {
-        say(L"OpenSeat needs administrator permission to start the workplaces.", MB_ICONERROR);
+        say(L"VISION needs administrator permission to start the workplaces.", MB_ICONERROR);
         return 1;
     }
 
@@ -1024,7 +1024,7 @@ int run_controller(HINSTANCE inst, BOOL test)
                     L"a time, so starting another workplace will sign the main user out.\n\n"
                     L"Several people at once needs Windows Server (2016 or newer). Windows Server allows two extra "
                     L"people without extra licences; more need Remote Desktop Services licences.\n\nTry anyway?",
-                    L"OpenSeat", MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2) != IDYES)
+                    L"VISION", MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2) != IDYES)
         return 1;
 
     if (!test) {
@@ -1035,21 +1035,21 @@ int run_controller(HINSTANCE inst, BOOL test)
     }
 
     if (!load_interception(g_installDir) && !load_interception(g_exeDir)) {
-        if (test) { say(L"Test mode: interception.dll is missing next to OpenSeat.exe.", MB_ICONERROR); return 1; }
+        if (test) { say(L"Test mode: interception.dll is missing next to VISION.exe.", MB_ICONERROR); return 1; }
         if (MessageBoxW(NULL,
-                        L"OpenSeat needs the free Interception input driver to tell keyboards and mice apart.\n\n"
+                        L"VISION needs the free Interception input driver to tell keyboards and mice apart.\n\n"
                         L"Download and install it now from github.com/oblitum/Interception? "
                         L"(Free for non-commercial use. The PC must restart afterwards.)",
-                        L"OpenSeat", MB_YESNO | MB_ICONQUESTION) != IDYES)
+                        L"VISION", MB_YESNO | MB_ICONQUESTION) != IDYES)
             return 1;
         if (!install_interception()) {
             say(L"The Interception driver could not be installed automatically.\n\n"
                 L"Install it by hand: download Interception.zip from github.com/oblitum/Interception/releases, run "
                 L"\"install-interception.exe /install\" as administrator, copy library\\x64\\interception.dll to "
-                L"C:\\Program Files\\OpenSeat, then restart the PC.", MB_ICONERROR);
+                L"C:\\Program Files\\VISION, then restart the PC.", MB_ICONERROR);
             return 1;
         }
-        say(L"The input driver is installed. Restart the PC, then press Start in OpenSeat again.", MB_ICONINFORMATION);
+        say(L"The input driver is installed. Restart the PC, then press Start in VISION again.", MB_ICONINFORMATION);
         return 0;
     }
     g_ctx = ic.create();
@@ -1068,15 +1068,15 @@ int run_controller(HINSTANCE inst, BOOL test)
     cls.hInstance = inst;
     cls.hCursor = LoadCursorW(NULL, IDC_ARROW);
     cls.hIcon = LoadIconW(inst, MAKEINTRESOURCEW(1));
-    cls.lpszClassName = L"OpenSeatStatus";
+    cls.lpszClassName = L"VISIONStatus";
     RegisterClassExW(&cls);
     cls.lpfnWndProc = prompt_proc;
-    cls.lpszClassName = L"OpenSeatPrompt";
+    cls.lpszClassName = L"VISIONPrompt";
     RegisterClassExW(&cls);
 
     RECT a = g_screens[seat_first_screen(0)].area;
     int w = S(600), h = S(170) + g_seatCount * S(52);
-    g_main = CreateWindowExW(0, L"OpenSeatStatus", L"OpenSeat", WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX,
+    g_main = CreateWindowExW(0, L"VISIONStatus", L"VISION", WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX,
                              a.left + (a.right - a.left - w) / 2, a.top + (a.bottom - a.top - h) / 2, w, h, NULL, NULL, inst, NULL);
     g_stopButton = CreateWindowW(L"BUTTON", L"Stop", WS_CHILD | WS_VISIBLE | BS_PUSHBUTTON, 0, 0, 10, 10, g_main,
                                  (HMENU)(INT_PTR)IDCANCEL, inst, NULL);

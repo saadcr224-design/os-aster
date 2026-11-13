@@ -1,5 +1,5 @@
 #!/bin/sh
-# End-to-end test of OpenSeat's input routing under Wine, with a stand-in for
+# End-to-end test of VISION's input routing under Wine, with a stand-in for
 # the Interception driver.  Needs: wine, Xvfb, MinGW-w64.
 # Checks that workplace 1's devices pass through untouched, that workplace 2's
 # keyboard reaches the agent, and that an unknown mouse can be picked by
@@ -12,11 +12,11 @@ export WINEPREFIX="$work/prefix" WINEDEBUG=-all DISPLAY=:93
 export OPENSEAT_TEST_SCREENS="0,0,1280,900;1280,0,2304,768"
 Xvfb :93 -screen 0 2304x900x24 >/dev/null 2>&1 & xvfb=$!
 sleep 1
-"$here/../build.sh" "$work/OpenSeat.exe" >/dev/null
+"$here/../build.sh" "$work/VISION.exe" >/dev/null
 x86_64-w64-mingw32-gcc -shared -O2 "$here/fakeintercept.c" -o "$work/interception.dll"
 wineboot -i >/dev/null 2>&1 || true
 
-dir="$WINEPREFIX/drive_c/users/$(whoami)/AppData/Roaming/OpenSeat"
+dir="$WINEPREFIX/drive_c/users/$(whoami)/AppData/Roaming/VISION"
 mkdir -p "$dir"
 printf '%s\r\n' '[Setup]' 'Workplaces=2' '[Screens]' 'ktest-screen-1=1' 'ktest-screen-2=2' \
   '[Devices]' 'kfake-kb-1=1' 'kfake-kb-2=2' 'kfake-mouse-1=1' \
@@ -44,9 +44,9 @@ m 12 1024 0 120 0 0
 S
 cd "$work"
 OPENSEAT_FAKE_SCRIPT="Z:$(echo "$work/script.txt" | tr / '\\')" OPENSEAT_FAKE_LOG="$work/fake.log" \
-  OPENSEAT_TEST_SEAT=2 wine OpenSeat.exe --start --test >/dev/null 2>&1 &
+  OPENSEAT_TEST_SEAT=2 wine VISION.exe --start --test >/dev/null 2>&1 &
 sleep 2
-OPENSEAT_TEST_AGENT_LOG="$work/agent.log" wine OpenSeat.exe --agent --test >/dev/null 2>&1 &
+OPENSEAT_TEST_AGENT_LOG="$work/agent.log" wine VISION.exe --agent --test >/dev/null 2>&1 &
 sleep 14
 
 cat > "$work/expect-fake.log" <<'E'
