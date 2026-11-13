@@ -65,6 +65,18 @@ enum {
 extern int g_share[MAX_SEATS];
 void shared_folder(WCHAR *out, size_t chars);
 
+/* Screens that are plugged in but Windows is not using as their own desktop
+ * area yet: switched off, or showing a copy of another screen ("Duplicate"). */
+typedef struct {
+    WCHAR name[64];
+    WCHAR connector[24];
+    BOOL mirrored;
+} IdleScreen;
+#define MAX_IDLE 8
+extern IdleScreen g_idle[MAX_IDLE];
+extern int g_idleCount;
+BOOL extend_displays(void); /* turn every connected screen into its own desktop area */
+
 void setup_dir(WCHAR *out, size_t chars);
 void setup_file(const WCHAR *name, WCHAR *out, size_t chars);
 void find_hardware(void);

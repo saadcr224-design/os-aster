@@ -23,7 +23,7 @@ int run_controller(HINSTANCE inst, BOOL test);
 int run_agent(HINSTANCE inst, BOOL test);
 
 enum { ID_ADD = 1, ID_REMOVE, ID_FIND, ID_REFRESH, ID_SAVE, ID_START, ID_SHARING, ID_MENU_SEAT = 1000, ID_MENU_NONE = 1099 };
-enum { HIT_NONE, HIT_SCREEN, HIT_DEVICE, HIT_SEAT };
+enum { HIT_NONE, HIT_SCREEN, HIT_DEVICE, HIT_SEAT, HIT_IDLE };
 
 static const COLORREF SEAT_COLORS[MAX_SEATS] = {
     RGB(37, 99, 205), RGB(214, 110, 20), RGB(34, 139, 84), RGB(140, 72, 190),
@@ -48,6 +48,7 @@ static WCHAR g_status[300] = L"";
 static int g_hoverKind, g_hoverIndex, g_menuKind, g_menuIndex, g_scroll;
 static RECT g_rcScreens, g_rcDevices, g_rcSeats, g_rcBar;
 static RECT g_seatDraw[MAX_SEATS];
+static RECT g_idleDraw; /* the "turn this screen on" bar */
 
 static int S(int v) { return MulDiv(v, g_dpi, 96); }
 static void share_summary(int seat, WCHAR *out, size_t chars);
@@ -118,7 +119,7 @@ static void layout(void)
     int margin = S(20), top = S(128), barH = S(60), sideW = S(310);
     int bottom = rc.bottom - barH - S(14);
     int leftW = rc.right - sideW - margin * 3;
-    int screensH = (bottom - top) * 37 / 100;
+    int screensH = (bottom - top) * 37 / 100 + (g_idleCount > 0 ? S(44) : 0); /* room for the turn-on bar */
 
     SetRect(&g_rcBar, 0, rc.bottom - barH, rc.right, rc.bottom);
     SetRect(&g_rcScreens, margin, top, margin + leftW, top + screensH);
@@ -210,9 +211,27 @@ static void paint_screens(HDC dc)
 {
     RECT area = g_rcScreens, stage;
     section_title(dc, area, 1, L"Screens: monitors, TVs and laptop displays",
-                  L"Every connected screen appears here. Click one to choose its workplace. Missing one? Press Win+P, Extend.");
+                  L"Every screen connected by cable appears here. Click one to choose its workplace.");
     SetRect(&stage, area.left, area.top + S(56), area.right, area.bottom);
     box(dc, stage, S(10), COL_PANEL, COL_LINE, 1);
+    SetRectEmpty(&g_idleDraw);
+    if (g_idleCount > 0) {
+        /* A screen is plugged in but Windows is not using it separately yet. */
+        WCHAR msg[260];
+        BOOL hover = g_hoverKind == HIT_IDLE;
+        SetRect(&g_idleDraw, stage.left + S(10), stage.bottom - S(44), stage.right - S(10), stage.bottom - S(8));
+        box(dc, g_idleDraw, S(8), hover ? RGB(255, 232, 170) : COL_NOTE_BG, RGB(214, 150, 20), hover ? 2 : 1);
+        if (g_idleCount == 1)
+            _snwprintf(msg, 260, L"New screen found: %ls%ls%ls %ls.  Click here to turn it on.", g_idle[0].name,
+                       g_idle[0].connector[0] ? L" \x00B7 " : L"", g_idle[0].connector,
+                       g_idle[0].mirrored ? L"shows a copy of another screen" : L"is connected but not in use");
+        else
+            _snwprintf(msg, 260, L"%d more screens are connected but not in use.  Click here to turn them on.", g_idleCount);
+        msg[259] = 0;
+        RECT inner = { g_idleDraw.left + S(12), g_idleDraw.top, g_idleDraw.right - S(12), g_idleDraw.bottom };
+        text(dc, g_fBold, COL_NOTE_TX, inner, DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS, msg);
+        stage.bottom -= S(44);
+    }
     if (g_screenCount == 0) {
         text(dc, g_fText, COL_MUTED, stage, DT_CENTER | DT_VCENTER | DT_SINGLELINE, L"No screens found.");
         return;
@@ -444,6 +463,7 @@ static void paint(HDC dc)
 
 static int hit_test(POINT pt, int *index)
 {
+    if (g_idleCount > 0 && PtInRect(&g_idleDraw, pt)) { *index = 0; return HIT_IDLE; }
     for (int i = 0; i < g_screenCount; i++)
         if (PtInRect(&g_screens[i].draw, pt)) { *index = i; return HIT_SCREEN; }
     RECT list = { g_rcDevices.left, g_rcDevices.top + S(59), g_rcDevices.right, g_rcDevices.bottom - S(3) };
@@ -693,7 +713,9 @@ static void refresh_hardware(BOOL automatic)
     free(oldScreens);
     free(oldDevices);
     layout();
-    if (automatic && moreScreens)
+    if (automatic && g_idleCount > 0 && !moreScreens)
+        _snwprintf(g_status, 300, L"A screen was connected. Click the yellow bar above to turn it on.");
+    else if (automatic && moreScreens)
         _snwprintf(g_status, 300, L"New screen connected. Click it above to give it to a workplace.");
     else if (automatic && g_screenCount < oldS)
         _snwprintf(g_status, 300, L"A screen was disconnected.");
@@ -797,7 +819,14 @@ static LRESULT CALLBACK wnd_proc(HWND wnd, UINT msg, WPARAM wp, LPARAM lp)
     case WM_LBUTTONUP: {
         POINT pt = { GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
         int index, kind = hit_test(pt, &index);
-        if (kind == HIT_SEAT) {
+        if (kind == HIT_IDLE) {
+            if (extend_displays()) {
+                set_status(L"Turning the screen on\x2026 It appears above in a moment.");
+                SetTimer(wnd, 3, 1500, NULL);
+            } else {
+                set_status(L"Windows could not turn it on. Press the Windows key + P and choose Extend.");
+            }
+        } else if (kind == HIT_SEAT) {
             edit_sharing();
         } else if (kind != HIT_NONE) {
             RECT r = kind == HIT_SCREEN ? g_screens[index].draw : g_devices[index].draw;

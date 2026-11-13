@@ -165,7 +165,9 @@ keyboard and mouse, and signs in to their own Windows account.
 
 1. Run `OpenSeat.exe`. Every connected monitor, TV or laptop display appears
    under **Screens**, with its name and plug type (HDMI, VGA, ...). A screen
-   plugged in later appears by itself.
+   plugged in later appears by itself. If a screen is connected but switched
+   off, or only shows a copy of another screen, a yellow bar says so: click
+   it and OpenSeat turns the screen on (the same as Win+P, Extend).
 2. Press **Add a workplace**, then click a screen and choose Workplace 2.
 3. Optionally click each keyboard and mouse and choose its workplace. If you
    skip this, OpenSeat asks at start: press a key and click on each

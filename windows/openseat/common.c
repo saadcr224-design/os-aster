@@ -15,6 +15,8 @@ BOOL g_demo;
 WCHAR g_accounts[MAX_SEATS][ACCOUNT_CHARS];
 int g_share[MAX_SEATS];
 static WCHAR g_gdiNames[MAX_SCREENS][CCHDEVICENAME];
+IdleScreen g_idle[MAX_IDLE];
+int g_idleCount;
 
 /* ---- saved setup -------------------------------------------------------- */
 
@@ -169,6 +171,103 @@ static BOOL CALLBACK screen_proc(HMONITOR monitor, HDC dc, LPRECT rect, LPARAM p
     return TRUE;
 }
 
+static const WCHAR *plug_name(DISPLAYCONFIG_VIDEO_OUTPUT_TECHNOLOGY tech)
+{
+    switch (tech) {
+    case DISPLAYCONFIG_OUTPUT_TECHNOLOGY_HD15: return L"VGA";
+    case DISPLAYCONFIG_OUTPUT_TECHNOLOGY_DVI: return L"DVI";
+    case DISPLAYCONFIG_OUTPUT_TECHNOLOGY_HDMI: return L"HDMI";
+    case DISPLAYCONFIG_OUTPUT_TECHNOLOGY_DISPLAYPORT_EXTERNAL: return L"DisplayPort";
+    case DISPLAYCONFIG_OUTPUT_TECHNOLOGY_LVDS:
+    case DISPLAYCONFIG_OUTPUT_TECHNOLOGY_DISPLAYPORT_EMBEDDED:
+    case DISPLAYCONFIG_OUTPUT_TECHNOLOGY_INTERNAL: return L"built-in";
+    case DISPLAYCONFIG_OUTPUT_TECHNOLOGY_COMPOSITE_VIDEO:
+    case DISPLAYCONFIG_OUTPUT_TECHNOLOGY_SVIDEO:
+    case DISPLAYCONFIG_OUTPUT_TECHNOLOGY_COMPONENT_VIDEO: return L"TV out";
+    case DISPLAYCONFIG_OUTPUT_TECHNOLOGY_MIRACAST: return L"wireless";
+    default: return L"";
+    }
+}
+
+typedef struct { LUID adapter; UINT32 id; } DisplayId;
+
+static BOOL same_display(const DisplayId *a, LUID adapter, UINT32 id)
+{
+    return a->id == id && a->adapter.LowPart == adapter.LowPart && a->adapter.HighPart == adapter.HighPart;
+}
+
+static void add_idle(LUID adapter, UINT32 target, BOOL mirrored)
+{
+    DISPLAYCONFIG_TARGET_DEVICE_NAME dst;
+    if (g_idleCount >= MAX_IDLE) return;
+    ZeroMemory(&dst, sizeof(dst));
+    dst.header.type = DISPLAYCONFIG_DEVICE_INFO_GET_TARGET_NAME;
+    dst.header.size = sizeof(dst);
+    dst.header.adapterId = adapter;
+    dst.header.id = target;
+    IdleScreen *idle = &g_idle[g_idleCount++];
+    ZeroMemory(idle, sizeof(*idle));
+    idle->mirrored = mirrored;
+    if (DisplayConfigGetDeviceInfo(&dst.header) == ERROR_SUCCESS) {
+        lstrcpynW(idle->name, dst.monitorFriendlyDeviceName, 64);
+        lstrcpynW(idle->connector, plug_name(dst.outputTechnology), 24);
+    }
+    if (!idle->name[0]) lstrcpynW(idle->name, L"Screen", 64);
+}
+
+/* Find screens that are plugged in but not their own desktop area: either
+ * Windows shows the same picture on two screens, or the screen is off. */
+static void find_idle_screens(void)
+{
+    DisplayId used[64], sources[64];
+    int usedCount = 0, sourceCount = 0;
+    UINT32 paths = 0, modes = 0;
+    g_idleCount = 0;
+
+    if (GetDisplayConfigBufferSizes(QDC_ONLY_ACTIVE_PATHS, &paths, &modes) != ERROR_SUCCESS) return;
+    DISPLAYCONFIG_PATH_INFO *path = calloc(paths ? paths : 1, sizeof(*path));
+    DISPLAYCONFIG_MODE_INFO *mode = calloc(modes ? modes : 1, sizeof(*mode));
+    if (path && mode && QueryDisplayConfig(QDC_ONLY_ACTIVE_PATHS, &paths, path, &modes, mode, NULL) == ERROR_SUCCESS) {
+        for (UINT32 i = 0; i < paths && usedCount < 64; i++) {
+            BOOL copy = FALSE;
+            for (int k = 0; k < sourceCount; k++)
+                if (same_display(&sources[k], path[i].sourceInfo.adapterId, path[i].sourceInfo.id)) copy = TRUE;
+            used[usedCount].adapter = path[i].targetInfo.adapterId;
+            used[usedCount++].id = path[i].targetInfo.id;
+            if (copy) { add_idle(path[i].targetInfo.adapterId, path[i].targetInfo.id, TRUE); continue; }
+            sources[sourceCount].adapter = path[i].sourceInfo.adapterId;
+            sources[sourceCount++].id = path[i].sourceInfo.id;
+        }
+    }
+    free(path);
+    free(mode);
+
+    paths = modes = 0;
+    if (GetDisplayConfigBufferSizes(QDC_ALL_PATHS, &paths, &modes) != ERROR_SUCCESS || !paths) return;
+    path = calloc(paths, sizeof(*path));
+    mode = calloc(modes ? modes : 1, sizeof(*mode));
+    if (path && mode && QueryDisplayConfig(QDC_ALL_PATHS, &paths, path, &modes, mode, NULL) == ERROR_SUCCESS) {
+        for (UINT32 i = 0; i < paths && usedCount < 64; i++) {
+            BOOL known = FALSE;
+            if (!path[i].targetInfo.targetAvailable) continue; /* nothing plugged into this output */
+            for (int k = 0; k < usedCount; k++)
+                if (same_display(&used[k], path[i].targetInfo.adapterId, path[i].targetInfo.id)) known = TRUE;
+            if (known) continue;
+            used[usedCount].adapter = path[i].targetInfo.adapterId;
+            used[usedCount++].id = path[i].targetInfo.id;
+            add_idle(path[i].targetInfo.adapterId, path[i].targetInfo.id, FALSE);
+        }
+    }
+    free(path);
+    free(mode);
+}
+
+/* Same as pressing Win+P and choosing "Extend". */
+BOOL extend_displays(void)
+{
+    return SetDisplayConfig(0, NULL, 0, NULL, SDC_TOPOLOGY_EXTEND | SDC_APPLY) == ERROR_SUCCESS;
+}
+
 /* Friendly name and plug type of every active display, e.g. "SAMSUNG" + "HDMI". */
 static void name_screens(const WCHAR gdi[][CCHDEVICENAME])
 {
@@ -192,21 +291,7 @@ static void name_screens(const WCHAR gdi[][CCHDEVICENAME])
             dst.header.id = path[i].targetInfo.id;
             if (DisplayConfigGetDeviceInfo(&src.header) != ERROR_SUCCESS) continue;
             if (DisplayConfigGetDeviceInfo(&dst.header) != ERROR_SUCCESS) continue;
-            const WCHAR *plug = L"";
-            switch (dst.outputTechnology) {
-            case DISPLAYCONFIG_OUTPUT_TECHNOLOGY_HD15: plug = L"VGA"; break;
-            case DISPLAYCONFIG_OUTPUT_TECHNOLOGY_DVI: plug = L"DVI"; break;
-            case DISPLAYCONFIG_OUTPUT_TECHNOLOGY_HDMI: plug = L"HDMI"; break;
-            case DISPLAYCONFIG_OUTPUT_TECHNOLOGY_DISPLAYPORT_EXTERNAL: plug = L"DisplayPort"; break;
-            case DISPLAYCONFIG_OUTPUT_TECHNOLOGY_LVDS:
-            case DISPLAYCONFIG_OUTPUT_TECHNOLOGY_DISPLAYPORT_EMBEDDED:
-            case DISPLAYCONFIG_OUTPUT_TECHNOLOGY_INTERNAL: plug = L"built-in"; break;
-            case DISPLAYCONFIG_OUTPUT_TECHNOLOGY_COMPOSITE_VIDEO:
-            case DISPLAYCONFIG_OUTPUT_TECHNOLOGY_SVIDEO:
-            case DISPLAYCONFIG_OUTPUT_TECHNOLOGY_COMPONENT_VIDEO: plug = L"TV out"; break;
-            case DISPLAYCONFIG_OUTPUT_TECHNOLOGY_MIRACAST: plug = L"wireless"; break;
-            default: break;
-            }
+            const WCHAR *plug = plug_name(dst.outputTechnology);
             for (int k = 0; k < g_screenCount; k++) {
                 if (lstrcmpiW(gdi[k], src.viewGdiDeviceName) != 0 || g_screens[k].name[0]) continue;
                 lstrcpynW(g_screens[k].name, dst.monitorFriendlyDeviceName, 64);
@@ -415,12 +500,18 @@ static BOOL test_screens(void)
         }
         part = next;
     }
+    WCHAR idle[64];
+    if (GetEnvironmentVariableW(L"OPENSEAT_TEST_IDLE", idle, 64)) { /* pretend one more screen is plugged in but off */
+        lstrcpynW(g_idle[0].name, idle, 64);
+        lstrcpynW(g_idle[0].connector, L"HDMI", 24);
+        g_idleCount = 1;
+    }
     return g_screenCount > 0;
 }
 
 void find_hardware(void)
 {
-    g_screenCount = g_deviceCount = 0;
+    g_screenCount = g_deviceCount = g_idleCount = 0;
     if (g_demo) {
         demo_hardware();
     } else if (test_screens()) {
@@ -428,6 +519,7 @@ void find_hardware(void)
     } else {
         EnumDisplayMonitors(NULL, NULL, screen_proc, 0);
         name_screens((const WCHAR (*)[CCHDEVICENAME])g_gdiNames); /* before sorting: same order as g_gdiNames */
+        find_idle_screens();
         qsort(g_screens, (size_t)g_screenCount, sizeof(Screen), screen_order);
         find_inputs();
     }
