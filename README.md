@@ -163,18 +163,38 @@ keyboard and mouse, and signs in to their own Windows account.
 
 ### How to use it
 
-1. Run `OpenSeat.exe`.
-2. Press **Add a workplace**, click a screen and give it to Workplace 2.
-3. Click "Signs in as" on the Workplace 2 card and enter a Windows account
-   name and password. OpenSeat creates the account if it does not exist.
-4. Optionally click each keyboard and mouse and choose its workplace. If you
-   skip this, OpenSeat asks you at start to press a key and click on each
+1. Run `OpenSeat.exe`. Every connected monitor, TV or laptop display appears
+   under **Screens**, with its name and plug type (HDMI, VGA, ...). A screen
+   plugged in later appears by itself.
+2. Press **Add a workplace**, then click a screen and choose Workplace 2.
+3. Optionally click each keyboard and mouse and choose its workplace. If you
+   skip this, OpenSeat asks at start: press a key and click on each
    workplace's screen.
-5. Press **Start workplaces** and allow administrator permission.
+4. Press **Start workplaces** and allow administrator permission.
+
+There is no account to create: OpenSeat makes a hidden Windows account for
+each workplace and signs it in by itself.
 
 A small window shows each workplace's state. **Stop** (or Ctrl+Alt+Shift+S on
 workplace 1's keyboard) ends the extra workplaces; their programs keep running
 and come back at the next start.
+
+### Connections and sharing
+
+Workplaces are separate: programs, files and screen content of one are not
+visible in another. The **Connections and sharing** panel is the one place
+that decides what each workplace may do:
+
+| Option | Meaning |
+| --- | --- |
+| Switched on | The workplace starts with Start workplaces |
+| Copy and paste | Text can be copied between it and Workplace 1 |
+| Shared folder | It may open `C:\Users\Public\OpenSeat Shared` |
+| Sound | It may play sound on the PC's speakers |
+
+Anything not ticked stays private. Changes apply the next time the workplaces
+start. Note: other drives (such as `D:`) follow normal Windows permissions, so
+keep private files inside your own user folder.
 
 ### How it works
 
@@ -198,10 +218,11 @@ and come back at the next start.
 ### Testing status
 
 Tested under Wine on Linux: the setup window, the account dialog, the
-press-a-key prompt and the whole input routing path, with a stand-in for the
+sharing panel, the press-a-key prompt and the whole input routing path, with a stand-in for the
 Interception driver (`windows/openseat/test/run-wine-test.sh`). **Not yet
-tested on a real Windows Server PC.** The Remote Desktop sign-in, account
-creation and driver installation can only be checked there.
+tested on a real Windows Server PC.** The workplace sign-in, the automatic
+hidden accounts, the shared-folder permissions, the screen names and the
+driver installation can only be checked there.
 
 Build it yourself (needs MinGW-w64):
 

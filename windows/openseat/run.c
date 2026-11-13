@@ -22,6 +22,7 @@
 #include <lm.h>
 #include <wincred.h>
 #include <sddl.h>
+#include <bcrypt.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <wchar.h>
@@ -422,10 +423,13 @@ static BOOL write_rdp(int seat, WCHAR *path, size_t chars)
              L"winposstr:s:0,1,%ld,%ld,%ld,%ld\nfull address:s:%ls\nusername:s:%ls\\%ls\n"
              L"prompt for credentials:i:0\npromptcredentialonce:i:0\nauthentication level:i:0\n"
              L"enablecredsspsupport:i:1\nnegotiate security layer:i:1\ndisplayconnectionbar:i:0\n"
-             L"pinconnectionbar:i:0\nautoreconnection enabled:i:1\naudiomode:i:0\nkeyboardhook:i:0\n"
-             L"redirectclipboard:i:0\nredirectprinters:i:0\nconnection type:i:7\nnetworkautodetect:i:0\n"
+             L"pinconnectionbar:i:0\nautoreconnection enabled:i:1\naudiomode:i:%d\nkeyboardhook:i:0\n"
+             L"redirectclipboard:i:%d\nredirectprinters:i:0\nredirectcomports:i:0\nredirectsmartcards:i:0\n"
+             L"redirectposdevices:i:0\ndrivestoredirect:s:\ndevicestoredirect:s:\nconnection type:i:7\nnetworkautodetect:i:0\n"
              L"bandwidthautodetect:i:1\nallow font smoothing:i:1\nsmart sizing:i:0\n",
-             a.right - a.left, a.bottom - a.top, a.left, a.top, a.right, a.bottom, host, comp, g_accounts[seat]);
+             a.right - a.left, a.bottom - a.top, a.left, a.top, a.right, a.bottom, host, comp, g_accounts[seat],
+             (g_share[seat] & SHARE_SOUND) ? 0 : 2,       /* 2 = no sound */
+             (g_share[seat] & SHARE_CLIPBOARD) ? 1 : 0);  /* nothing else of workplace 1 is ever passed in */
     fclose(f);
     return TRUE;
 }
@@ -452,7 +456,7 @@ static void launch_seat(int seat)
     st->pid = pi.dwProcessId;
     st->window = NULL;
     st->startedAt = GetTickCount();
-    set_state(seat, L"Signing in as %ls\x2026", g_accounts[seat]);
+    set_state(seat, L"Starting\x2026");
 }
 
 typedef struct { DWORD pid; HWND found; } FindWin;
@@ -493,8 +497,7 @@ static void watch_seats(void)
             st->quickExits = (now - st->startedAt < 20000) ? st->quickExits + 1 : 0;
             if (st->quickExits >= 3) {
                 st->bad = TRUE;
-                set_state(s, L"Could not sign in as %ls. Check the account and password in the setup window.",
-                          g_accounts[s]);
+                set_state(s, L"Windows would not start this workplace. On Windows 10/11 only one person can be signed in.");
                 continue;
             }
             st->nextLaunch = now + 3000;
@@ -560,6 +563,11 @@ static void next_identify(void)
 
 /* ---- one-time preparation (needs administrator rights) --------------------- */
 
+static BOOL set_dword(HKEY root, const WCHAR *path, const WCHAR *name, DWORD value)
+{
+    return RegSetKeyValueW(root, path, name, REG_DWORD, &value, sizeof(value)) == ERROR_SUCCESS;
+}
+
 static BOOL read_password(int seat, WCHAR *out, size_t chars)
 {
     WCHAR target[64];
@@ -575,40 +583,93 @@ static BOOL read_password(int seat, WCHAR *out, size_t chars)
     return TRUE;
 }
 
+static BOOL save_password(int seat, const WCHAR *password)
+{
+    WCHAR target[64], user[MAX_COMPUTERNAME_LENGTH + ACCOUNT_CHARS + 2], comp[MAX_COMPUTERNAME_LENGTH + 1];
+    DWORD n = MAX_COMPUTERNAME_LENGTH + 1;
+    if (!GetComputerNameW(comp, &n)) lstrcpynW(comp, L".", MAX_COMPUTERNAME_LENGTH + 1);
+    _snwprintf(user, MAX_COMPUTERNAME_LENGTH + ACCOUNT_CHARS + 2, L"%ls\\%ls", comp, g_accounts[seat]);
+    seat_cred_target(seat, target, 64);
+    CREDENTIALW c;
+    ZeroMemory(&c, sizeof(c));
+    c.Type = CRED_TYPE_GENERIC; /* the Remote Desktop client reads TERMSRV/<host> */
+    c.TargetName = target;
+    c.UserName = user;
+    c.CredentialBlob = (LPBYTE)password;
+    c.CredentialBlobSize = (DWORD)(wcslen(password) * sizeof(WCHAR));
+    c.Persist = CRED_PERSIST_LOCAL_MACHINE;
+    return CredWriteW(&c, 0);
+}
+
+/* A long random password nobody has to know: OpenSeat signs the workplace in itself. */
+static BOOL make_password(WCHAR *out, size_t chars)
+{
+    static const WCHAR alphabet[] = L"ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789";
+    BYTE random[28];
+    if (chars < sizeof(random) + 5) return FALSE;
+    if (BCryptGenRandom(NULL, random, sizeof(random), BCRYPT_USE_SYSTEM_PREFERRED_RNG) != 0) return FALSE;
+    for (size_t i = 0; i < sizeof(random); i++) out[i] = alphabet[random[i] % (sizeof(alphabet) / sizeof(WCHAR) - 1)];
+    lstrcpyW(out + sizeof(random), L"aK7#"); /* satisfies "must contain upper, lower, digit, symbol" rules */
+    SecureZeroMemory(random, sizeof(random));
+    return TRUE;
+}
+
+/* Each workplace runs in its own hidden Windows account, made and signed in
+ * by OpenSeat.  The person at the PC never creates or types one. */
 static BOOL ensure_account(int seat, WCHAR *problem, size_t chars)
 {
     USER_INFO_1 *info = NULL;
-    WCHAR password[260];
-    if (!read_password(seat, password, 260)) {
-        _snwprintf(problem, chars, L"No password is saved for Workplace %d. Open the setup window and click the workplace to enter it.", seat + 1);
-        return FALSE;
-    }
-    NET_API_STATUS st = NetUserGetInfo(NULL, g_accounts[seat], 1, (LPBYTE *)&info);
-    if (st == NERR_Success) {
-        NetApiBufferFree(info);
-    } else if (st == NERR_UserNotFound) {
-        USER_INFO_1 add;
-        ZeroMemory(&add, sizeof(add));
-        add.usri1_name = g_accounts[seat];
-        add.usri1_password = password;
-        add.usri1_priv = USER_PRIV_USER;
-        add.usri1_flags = UF_SCRIPT | UF_DONT_EXPIRE_PASSWD;
-        add.usri1_comment = L"Created by OpenSeat";
-        DWORD bad = 0;
-        st = NetUserAdd(NULL, 1, (LPBYTE)&add, &bad);
-        if (st != NERR_Success) {
-            SecureZeroMemory(password, sizeof(password));
-            _snwprintf(problem, chars, L"Could not create the Windows account \"%ls\" (error %lu). The password may not meet this PC's rules.",
-                       g_accounts[seat], st);
-            return FALSE;
-        }
-    } else {
-        SecureZeroMemory(password, sizeof(password));
-        _snwprintf(problem, chars, L"Could not check the Windows account \"%ls\" (error %lu).", g_accounts[seat], st);
-        return FALSE;
-    }
+    WCHAR password[64], full[40], comment[] = L"Workplace account made by OpenSeat";
+    WCHAR *name = g_accounts[seat];
+    BOOL haveSaved = read_password(seat, password, 64);
     SecureZeroMemory(password, sizeof(password));
 
+    NET_API_STATUS st = NetUserGetInfo(NULL, name, 1, (LPBYTE *)&info);
+    if (st == NERR_Success) {
+        BOOL ours = info->usri1_comment && wcsstr(info->usri1_comment, L"OpenSeat") != NULL;
+        NetApiBufferFree(info);
+        if (!ours) {
+            _snwprintf(problem, chars, L"This PC already has a Windows account called \"%ls\" that OpenSeat did not make. "
+                                       L"Rename or remove it, then start again.", name);
+            return FALSE;
+        }
+        if (!haveSaved) { /* e.g. another administrator starts OpenSeat for the first time */
+            USER_INFO_1003 set;
+            if (!make_password(password, 64)) goto failed;
+            set.usri1003_password = password;
+            st = NetUserSetInfo(NULL, name, 1003, (LPBYTE)&set, NULL);
+            if (st != NERR_Success || !save_password(seat, password)) goto failed;
+        }
+    } else if (st == NERR_UserNotFound) {
+        USER_INFO_1 add;
+        USER_INFO_1011 fullName;
+        DWORD bad = 0;
+        if (!make_password(password, 64)) goto failed;
+        ZeroMemory(&add, sizeof(add));
+        add.usri1_name = name;
+        add.usri1_password = password;
+        add.usri1_priv = USER_PRIV_USER;
+        add.usri1_flags = UF_SCRIPT | UF_DONT_EXPIRE_PASSWD | UF_PASSWD_CANT_CHANGE;
+        add.usri1_comment = comment;
+        st = NetUserAdd(NULL, 1, (LPBYTE)&add, &bad);
+        if (st != NERR_Success || !save_password(seat, password)) goto failed;
+        _snwprintf(full, 40, L"Workplace %d", seat + 1);
+        fullName.usri1011_full_name = full;
+        NetUserSetInfo(NULL, name, 1011, (LPBYTE)&fullName, NULL);
+    } else {
+        goto failed;
+    }
+    SecureZeroMemory(password, sizeof(password));
+    /* Keep these accounts off the Windows sign-in screen. */
+    set_dword(HKEY_LOCAL_MACHINE, L"SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Winlogon\\SpecialAccounts\\UserList", name, 0);
+    goto group;
+
+failed:
+    SecureZeroMemory(password, sizeof(password));
+    _snwprintf(problem, chars, L"OpenSeat could not prepare Workplace %d (Windows error %lu).", seat + 1, (unsigned long)st);
+    return FALSE;
+
+group:;
     /* Remote Desktop Users (well-known SID, its name depends on the language). */
     PSID group = NULL;
     WCHAR groupName[256], domain[256];
@@ -627,11 +688,6 @@ static BOOL ensure_account(int seat, WCHAR *problem, size_t chars)
     }
     if (group) LocalFree(group);
     return TRUE;
-}
-
-static BOOL set_dword(HKEY root, const WCHAR *path, const WCHAR *name, DWORD value)
-{
-    return RegSetKeyValueW(root, path, name, REG_DWORD, &value, sizeof(value)) == ERROR_SUCCESS;
 }
 
 static BOOL install_files(WCHAR *problem, size_t chars)
@@ -674,6 +730,44 @@ static BOOL install_files(WCHAR *problem, size_t chars)
         RegSetKeyValueW(HKEY_LOCAL_MACHINE, list, name, REG_SZ, target, (DWORD)((wcslen(target) + 1) * sizeof(WCHAR)));
     }
     return TRUE;
+}
+
+static void run_hidden(WCHAR *cmd)
+{
+    STARTUPINFOW si;
+    PROCESS_INFORMATION pi;
+    ZeroMemory(&si, sizeof(si));
+    si.cb = sizeof(si);
+    if (!CreateProcessW(NULL, cmd, NULL, NULL, FALSE, CREATE_NO_WINDOW, NULL, NULL, &si, &pi)) return;
+    WaitForSingleObject(pi.hProcess, 30000);
+    CloseHandle(pi.hProcess);
+    CloseHandle(pi.hThread);
+}
+
+/* The shared folder is the only place files can pass between workplaces.
+ * Only workplaces ticked in "Connections and sharing" may open it. */
+static void apply_folder_sharing(void)
+{
+    WCHAR dir[MAX_PATH], sys[MAX_PATH], me[300], cmd[2048];
+    DWORD meLen = 300;
+    BOOL any = FALSE;
+    shared_folder(dir, MAX_PATH);
+    for (int s = 1; s < g_seatCount; s++)
+        if ((g_share[s] & SHARE_ON) && (g_share[s] & SHARE_FOLDER)) any = TRUE;
+    if (!any && GetFileAttributesW(dir) == INVALID_FILE_ATTRIBUTES) return;
+    CreateDirectoryW(dir, NULL);
+    GetSystemDirectoryW(sys, MAX_PATH);
+    if (!GetUserNameW(me, &meLen)) return;
+    /* Start from nothing inherited: administrators, the system and workplace 1 only. */
+    _snwprintf(cmd, 2048, L"\"%ls\\icacls.exe\" \"%ls\" /inheritance:r /grant:r *S-1-5-32-544:(OI)(CI)F *S-1-5-18:(OI)(CI)F \"%ls\":(OI)(CI)F",
+               sys, dir, me);
+    run_hidden(cmd);
+    for (int s = 1; s < MAX_SEATS; s++) {
+        BOOL allowed = s < g_seatCount && (g_share[s] & SHARE_ON) && (g_share[s] & SHARE_FOLDER);
+        if (allowed) _snwprintf(cmd, 2048, L"\"%ls\\icacls.exe\" \"%ls\" /grant:r %ls:(OI)(CI)M", sys, dir, g_accounts[s]);
+        else _snwprintf(cmd, 2048, L"\"%ls\\icacls.exe\" \"%ls\" /remove %ls", sys, dir, g_accounts[s]);
+        run_hidden(cmd);
+    }
 }
 
 static BOOL install_interception(void)
@@ -750,9 +844,9 @@ static void paint_status(HWND wnd, HDC dc)
         if (s == 0) {
             lstrcpynW(line, L"Workplace 1  \x00B7  you, on the main Windows desktop", 300);
         } else if (!g_seat[s].active) {
-            _snwprintf(line, 300, L"Workplace %d  \x00B7  not started", s + 1);
+            _snwprintf(line, 300, L"Workplace %d  \x00B7  switched off", s + 1);
         } else {
-            _snwprintf(line, 300, L"Workplace %d  \x00B7  %ls  \x00B7  screen %d%ls", s + 1, g_accounts[s], g_seat[s].screen + 1,
+            _snwprintf(line, 300, L"Workplace %d  \x00B7  screen %d%ls", s + 1, g_seat[s].screen + 1,
                        g_seat[s].pipe ? L"  \x00B7  keyboard and mouse connected" : L"");
         }
         SetTextColor(dc, RGB(28, 32, 38));
@@ -857,12 +951,9 @@ static BOOL check_setup(WCHAR *problem, size_t chars)
     for (int s = 1; s < g_seatCount; s++) {
         Seat *st = &g_seat[s];
         st->screen = seat_first_screen(s);
+        if (!(g_share[s] & SHARE_ON)) { set_state(s, L"Switched off in Connections and sharing."); continue; }
         if (st->screen < 0) {
             _snwprintf(problem, chars, L"Workplace %d has no screen. Open the setup window and give it one.", s + 1);
-            return FALSE;
-        }
-        if (!g_test && !g_accounts[s][0]) {
-            _snwprintf(problem, chars, L"Workplace %d has no Windows account. Open the setup window and click the workplace.", s + 1);
             return FALSE;
         }
         st->active = TRUE;
@@ -870,7 +961,7 @@ static BOOL check_setup(WCHAR *problem, size_t chars)
         active++;
     }
     if (!active) {
-        _snwprintf(problem, chars, L"There is only one workplace. Add another one in the setup window first.");
+        _snwprintf(problem, chars, L"No extra workplace is switched on. Add one in the setup window, or switch it on in Connections and sharing.");
         return FALSE;
     }
     if (seat_screens(0) == 0) {
@@ -883,7 +974,7 @@ static BOOL check_setup(WCHAR *problem, size_t chars)
         if (g_screens[i].seat == 0) UnionRect(&main, &main, &g_screens[i].area);
     for (int s = 1; s < g_seatCount; s++) {
         RECT overlap;
-        if (IntersectRect(&overlap, &main, &g_screens[g_seat[s].screen].area)) {
+        if (g_seat[s].active && IntersectRect(&overlap, &main, &g_screens[g_seat[s].screen].area)) {
             _snwprintf(problem, chars, L"Workplace %d's screen sits between workplace 1's screens. In Windows Display settings, "
                                        L"place workplace 1's screens next to each other.", s + 1);
             return FALSE;
@@ -938,7 +1029,8 @@ int run_controller(HINSTANCE inst, BOOL test)
 
     if (!test) {
         for (int s = 1; s < g_seatCount; s++)
-            if (!ensure_account(s, problem, 512)) { say(problem, MB_ICONWARNING); return 1; }
+            if (g_seat[s].active && !ensure_account(s, problem, 512)) { say(problem, MB_ICONWARNING); return 1; }
+        apply_folder_sharing();
         if (!install_files(problem, 512)) { say(problem, MB_ICONERROR); return 1; }
     }
 
@@ -993,6 +1085,7 @@ int run_controller(HINSTANCE inst, BOOL test)
     SetThreadExecutionState(ES_CONTINUOUS | ES_SYSTEM_REQUIRED | ES_DISPLAY_REQUIRED); /* the main desktop sees no input from other workplaces */
 
     for (int s = 1; s < g_seatCount; s++) if (g_seat[s].active) set_state(s, L"Starting\x2026");
+        else if (!g_seat[s].state[0]) set_state(s, L"Switched off.");
     g_server = CreateThread(NULL, 0, server_thread, NULL, 0, NULL);
     g_router = CreateThread(NULL, 0, router_thread, NULL, 0, NULL);
     ShowWindow(g_main, SW_SHOWNORMAL);

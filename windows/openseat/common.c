@@ -13,6 +13,8 @@ Device g_devices[MAX_DEVICES];
 int g_screenCount, g_deviceCount, g_seatCount = 1;
 BOOL g_demo;
 WCHAR g_accounts[MAX_SEATS][ACCOUNT_CHARS];
+int g_share[MAX_SEATS];
+static WCHAR g_gdiNames[MAX_SCREENS][CCHDEVICENAME];
 
 /* ---- saved setup -------------------------------------------------------- */
 
@@ -70,8 +72,9 @@ void load_setup(void)
     for (int s = 0; s < MAX_SEATS; s++) {
         WCHAR name[24];
         _snwprintf(name, 24, L"Workplace%d", s + 1);
-        GetPrivateProfileStringW(L"Accounts", name, L"", g_accounts[s], ACCOUNT_CHARS, path);
-        if (!valid_account_name(g_accounts[s])) g_accounts[s][0] = 0;
+        /* The person never sees or types these: OpenSeat makes them itself. */
+        _snwprintf(g_accounts[s], ACCOUNT_CHARS, L"OpenSeat%d", s + 1);
+        g_share[s] = (int)GetPrivateProfileIntW(L"Sharing", name, SHARE_DEFAULT, path) & 15;
     }
 }
 
@@ -100,7 +103,8 @@ BOOL save_setup(void)
     for (int s = 1; s < MAX_SEATS && ok; s++) {
         WCHAR name[24];
         _snwprintf(name, 24, L"Workplace%d", s + 1);
-        ok &= WritePrivateProfileStringW(L"Accounts", name, s < g_seatCount ? g_accounts[s] : L"", path);
+        _snwprintf(value, 16, L"%d", g_share[s]);
+        ok &= WritePrivateProfileStringW(L"Sharing", name, value, path);
     }
     return ok;
 }
@@ -157,11 +161,61 @@ static BOOL CALLBACK screen_proc(HMONITOR monitor, HDC dc, LPRECT rect, LPARAM p
     s->area = info.rcMonitor;
     s->primary = (info.dwFlags & MONITORINFOF_PRIMARY) != 0;
     lstrcpynW(s->key, info.szDevice, 300);
+    lstrcpynW(g_gdiNames[g_screenCount - 1], info.szDevice, CCHDEVICENAME);
     ZeroMemory(&dd, sizeof(dd));
     dd.cb = sizeof(dd);
     if (EnumDisplayDevicesW(info.szDevice, 0, &dd, EDD_GET_DEVICE_INTERFACE_NAME) && dd.DeviceID[0])
         lstrcpynW(s->key, dd.DeviceID, 300); /* survives the display being renumbered */
     return TRUE;
+}
+
+/* Friendly name and plug type of every active display, e.g. "SAMSUNG" + "HDMI". */
+static void name_screens(const WCHAR gdi[][CCHDEVICENAME])
+{
+    UINT32 paths = 0, modes = 0;
+    if (GetDisplayConfigBufferSizes(QDC_ONLY_ACTIVE_PATHS, &paths, &modes) != ERROR_SUCCESS || !paths) return;
+    DISPLAYCONFIG_PATH_INFO *path = calloc(paths, sizeof(*path));
+    DISPLAYCONFIG_MODE_INFO *mode = calloc(modes ? modes : 1, sizeof(*mode));
+    if (path && mode && QueryDisplayConfig(QDC_ONLY_ACTIVE_PATHS, &paths, path, &modes, mode, NULL) == ERROR_SUCCESS) {
+        for (UINT32 i = 0; i < paths; i++) {
+            DISPLAYCONFIG_SOURCE_DEVICE_NAME src;
+            DISPLAYCONFIG_TARGET_DEVICE_NAME dst;
+            ZeroMemory(&src, sizeof(src));
+            src.header.type = DISPLAYCONFIG_DEVICE_INFO_GET_SOURCE_NAME;
+            src.header.size = sizeof(src);
+            src.header.adapterId = path[i].sourceInfo.adapterId;
+            src.header.id = path[i].sourceInfo.id;
+            ZeroMemory(&dst, sizeof(dst));
+            dst.header.type = DISPLAYCONFIG_DEVICE_INFO_GET_TARGET_NAME;
+            dst.header.size = sizeof(dst);
+            dst.header.adapterId = path[i].targetInfo.adapterId;
+            dst.header.id = path[i].targetInfo.id;
+            if (DisplayConfigGetDeviceInfo(&src.header) != ERROR_SUCCESS) continue;
+            if (DisplayConfigGetDeviceInfo(&dst.header) != ERROR_SUCCESS) continue;
+            const WCHAR *plug = L"";
+            switch (dst.outputTechnology) {
+            case DISPLAYCONFIG_OUTPUT_TECHNOLOGY_HD15: plug = L"VGA"; break;
+            case DISPLAYCONFIG_OUTPUT_TECHNOLOGY_DVI: plug = L"DVI"; break;
+            case DISPLAYCONFIG_OUTPUT_TECHNOLOGY_HDMI: plug = L"HDMI"; break;
+            case DISPLAYCONFIG_OUTPUT_TECHNOLOGY_DISPLAYPORT_EXTERNAL: plug = L"DisplayPort"; break;
+            case DISPLAYCONFIG_OUTPUT_TECHNOLOGY_LVDS:
+            case DISPLAYCONFIG_OUTPUT_TECHNOLOGY_DISPLAYPORT_EMBEDDED:
+            case DISPLAYCONFIG_OUTPUT_TECHNOLOGY_INTERNAL: plug = L"built-in"; break;
+            case DISPLAYCONFIG_OUTPUT_TECHNOLOGY_COMPOSITE_VIDEO:
+            case DISPLAYCONFIG_OUTPUT_TECHNOLOGY_SVIDEO:
+            case DISPLAYCONFIG_OUTPUT_TECHNOLOGY_COMPONENT_VIDEO: plug = L"TV out"; break;
+            case DISPLAYCONFIG_OUTPUT_TECHNOLOGY_MIRACAST: plug = L"wireless"; break;
+            default: break;
+            }
+            for (int k = 0; k < g_screenCount; k++) {
+                if (lstrcmpiW(gdi[k], src.viewGdiDeviceName) != 0 || g_screens[k].name[0]) continue;
+                lstrcpynW(g_screens[k].name, dst.monitorFriendlyDeviceName, 64);
+                lstrcpynW(g_screens[k].connector, plug, 24);
+            }
+        }
+    }
+    free(path);
+    free(mode);
 }
 
 static int screen_order(const void *a, const void *b)
@@ -309,6 +363,8 @@ static void demo_hardware(void)
         s->area = screens[i].area;
         s->primary = screens[i].primary;
         _snwprintf(s->key, 300, L"demo-screen-%d", i + 1);
+        lstrcpynW(s->name, i == 0 ? L"DELL U2419H" : i == 1 ? L"LG TV" : L"Laptop screen", 64);
+        lstrcpynW(s->connector, i == 0 ? L"DisplayPort" : i == 1 ? L"HDMI" : L"VGA", 24);
     }
     for (int i = 0; i < 5; i++) {
         WCHAR key[32];
@@ -353,6 +409,8 @@ static BOOL test_screens(void)
         if (swscanf(part, L"%ld,%ld,%ld,%ld", &s->area.left, &s->area.top, &s->area.right, &s->area.bottom) == 4) {
             s->primary = g_screenCount == 0;
             _snwprintf(s->key, 300, L"test-screen-%d", g_screenCount + 1);
+            lstrcpynW(s->name, g_screenCount == 0 ? L"DELL U2419H" : L"SAMSUNG TV", 64);
+            lstrcpynW(s->connector, g_screenCount == 0 ? L"DisplayPort" : L"HDMI", 24);
             g_screenCount++;
         }
         part = next;
@@ -369,6 +427,7 @@ void find_hardware(void)
         find_inputs();
     } else {
         EnumDisplayMonitors(NULL, NULL, screen_proc, 0);
+        name_screens((const WCHAR (*)[CCHDEVICENAME])g_gdiNames); /* before sorting: same order as g_gdiNames */
         qsort(g_screens, (size_t)g_screenCount, sizeof(Screen), screen_order);
         find_inputs();
     }
@@ -437,14 +496,12 @@ void seat_cred_target(int seat, WCHAR *out, size_t chars)
     out[chars - 1] = 0;
 }
 
-BOOL valid_account_name(const WCHAR *name)
+void shared_folder(WCHAR *out, size_t chars)
 {
-    size_t n = wcslen(name);
-    if (n == 0 || n > 20) return FALSE; /* Windows limit for local account names */
-    for (const WCHAR *p = name; *p; p++)
-        if (*p < 32 || wcschr(L"\"/\\[]:;|=,+*?<>@%", *p)) return FALSE;
-    if (name[n - 1] == L'.' || name[0] == L' ' || name[n - 1] == L' ') return FALSE;
-    return TRUE;
+    WCHAR pub[MAX_PATH];
+    if (!GetEnvironmentVariableW(L"PUBLIC", pub, MAX_PATH)) lstrcpynW(pub, L"C:\\Users\\Public", MAX_PATH);
+    _snwprintf(out, chars, L"%ls\\OpenSeat Shared", pub);
+    out[chars - 1] = 0;
 }
 
 BOOL is_server_os(void)

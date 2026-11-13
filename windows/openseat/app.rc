@@ -26,19 +26,28 @@ BEGIN
   END
 END
 
-IDD_ACCOUNT DIALOGEX 0, 0, 268, 156
+IDD_SHARING DIALOGEX 0, 0, 340, 214
 STYLE DS_MODALFRAME | DS_CENTER | DS_SHELLFONT | WS_POPUP | WS_CAPTION | WS_SYSMENU
-CAPTION "Windows account for this workplace"
+CAPTION "Connections and sharing"
 FONT 9, "Segoe UI", 400, 0, 1
 BEGIN
-    LTEXT "", IDC_ACC_INFO, 10, 8, 248, 26
-    LTEXT "Account name:", -1, 10, 44, 82, 10
-    EDITTEXT IDC_ACC_NAME, 96, 42, 162, 13, ES_AUTOHSCROLL
-    LTEXT "Password:", -1, 10, 64, 82, 10
-    EDITTEXT IDC_ACC_PASS, 96, 62, 162, 13, ES_PASSWORD | ES_AUTOHSCROLL
-    LTEXT "Password again:", -1, 10, 84, 82, 10
-    EDITTEXT IDC_ACC_PASS2, 96, 82, 162, 13, ES_PASSWORD | ES_AUTOHSCROLL
-    LTEXT "If this account does not exist yet, OpenSeat creates it when you press Start. The password is kept in Windows Credential Manager.", -1, 10, 102, 248, 20
-    DEFPUSHBUTTON "OK", IDOK, 152, 134, 50, 14
-    PUSHBUTTON "Cancel", IDCANCEL, 208, 134, 50, 14
+    LTEXT "Choose what each workplace is allowed to do. Anything not ticked stays private.", -1, 10, 8, 320, 18
+    LTEXT "Workplace 2", 219, 10, 35, 60, 10
+    AUTOCHECKBOX "Switched on", 210, 74, 34, 62, 12
+    AUTOCHECKBOX "Copy and paste", 211, 140, 34, 70, 12
+    AUTOCHECKBOX "Shared folder", 212, 214, 34, 64, 12
+    AUTOCHECKBOX "Sound", 213, 282, 34, 44, 12
+    LTEXT "Workplace 3", 229, 10, 53, 60, 10
+    AUTOCHECKBOX "Switched on", 220, 74, 52, 62, 12
+    AUTOCHECKBOX "Copy and paste", 221, 140, 52, 70, 12
+    AUTOCHECKBOX "Shared folder", 222, 214, 52, 64, 12
+    AUTOCHECKBOX "Sound", 223, 282, 52, 44, 12
+    LTEXT "Workplace 4", 239, 10, 71, 60, 10
+    AUTOCHECKBOX "Switched on", 230, 74, 70, 62, 12
+    AUTOCHECKBOX "Copy and paste", 231, 140, 70, 70, 12
+    AUTOCHECKBOX "Shared folder", 232, 214, 70, 64, 12
+    AUTOCHECKBOX "Sound", 233, 282, 70, 44, 12
+    LTEXT "", IDC_SHARE_INFO, 10, 94, 320, 92
+    DEFPUSHBUTTON "OK", IDOK, 224, 192, 50, 14
+    PUSHBUTTON "Cancel", IDCANCEL, 280, 192, 50, 14
 END

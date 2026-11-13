@@ -28,6 +28,8 @@ enum { DEV_KEYBOARD = 1, DEV_MOUSE = 2 };
 
 typedef struct {
     WCHAR key[300];   /* stable id used in the saved file */
+    WCHAR name[64];      /* e.g. "SAMSUNG" or "LG TV" */
+    WCHAR connector[24]; /* e.g. "HDMI", "VGA", "built-in" */
     RECT area;        /* position on the Windows desktop */
     BOOL primary;
     int seat;
@@ -50,7 +52,18 @@ extern Screen g_screens[MAX_SCREENS];
 extern Device g_devices[MAX_DEVICES];
 extern int g_screenCount, g_deviceCount, g_seatCount;
 extern BOOL g_demo;
-extern WCHAR g_accounts[MAX_SEATS][ACCOUNT_CHARS]; /* Windows account per workplace; [0] unused */
+extern WCHAR g_accounts[MAX_SEATS][ACCOUNT_CHARS]; /* hidden Windows account OpenSeat makes per workplace; [0] unused */
+
+/* What each extra workplace is allowed to do; everything else stays private. */
+enum {
+    SHARE_ON = 1,      /* the workplace may start */
+    SHARE_CLIPBOARD = 2, /* copy and paste with workplace 1 */
+    SHARE_FOLDER = 4,  /* may use the shared folder */
+    SHARE_SOUND = 8,   /* may play sound on the PC's speakers */
+    SHARE_DEFAULT = SHARE_ON | SHARE_SOUND
+};
+extern int g_share[MAX_SEATS];
+void shared_folder(WCHAR *out, size_t chars);
 
 void setup_dir(WCHAR *out, size_t chars);
 void setup_file(const WCHAR *name, WCHAR *out, size_t chars);
@@ -68,7 +81,6 @@ BOOL hwid_matches(const Device *d, const WCHAR *hwid);
  * address, so Windows keeps a separate saved password for each one. */
 void seat_host(int seat, WCHAR *out, size_t chars);
 void seat_cred_target(int seat, WCHAR *out, size_t chars);
-BOOL valid_account_name(const WCHAR *name);
 BOOL is_server_os(void);
 
 /* Learned: Interception device number -> workplace, remembered between runs. */

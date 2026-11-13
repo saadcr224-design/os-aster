@@ -14,7 +14,7 @@
 #include <windowsx.h>
 #include <commctrl.h>
 #include <shellapi.h>
-#include <wincred.h>
+#include <dbt.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <wchar.h>
@@ -22,7 +22,7 @@
 int run_controller(HINSTANCE inst, BOOL test);
 int run_agent(HINSTANCE inst, BOOL test);
 
-enum { ID_ADD = 1, ID_REMOVE, ID_FIND, ID_REFRESH, ID_SAVE, ID_START, ID_MENU_SEAT = 1000, ID_MENU_NONE = 1099 };
+enum { ID_ADD = 1, ID_REMOVE, ID_FIND, ID_REFRESH, ID_SAVE, ID_START, ID_SHARING, ID_MENU_SEAT = 1000, ID_MENU_NONE = 1099 };
 enum { HIT_NONE, HIT_SCREEN, HIT_DEVICE, HIT_SEAT };
 
 static const COLORREF SEAT_COLORS[MAX_SEATS] = {
@@ -42,7 +42,7 @@ static const COLORREF SEAT_COLORS[MAX_SEATS] = {
 
 static BOOL g_dirty, g_finding;
 static int g_dpi = 96;
-static HWND g_wnd, g_btnAdd, g_btnRemove, g_btnFind, g_btnRefresh, g_btnSave, g_btnStart;
+static HWND g_wnd, g_btnAdd, g_btnRemove, g_btnFind, g_btnRefresh, g_btnSave, g_btnStart, g_btnSharing;
 static HFONT g_fTitle, g_fHead, g_fText, g_fBold, g_fSmall, g_fHuge;
 static WCHAR g_status[300] = L"";
 static int g_hoverKind, g_hoverIndex, g_menuKind, g_menuIndex, g_scroll;
@@ -50,6 +50,8 @@ static RECT g_rcScreens, g_rcDevices, g_rcSeats, g_rcBar;
 static RECT g_seatDraw[MAX_SEATS];
 
 static int S(int v) { return MulDiv(v, g_dpi, 96); }
+static void share_summary(int seat, WCHAR *out, size_t chars);
+static void refresh_hardware(BOOL automatic);
 
 /* ---- what each workplace has -------------------------------------------- */
 
@@ -57,7 +59,7 @@ static BOOL seat_ready(int seat)
 {
     if (seat == 0) return seat_screens(0) > 0 && seat_has(0, DEV_KEYBOARD) && seat_has(0, DEV_MOUSE);
     /* An extra workplace's keyboard and mouse can also be picked at start by pressing them. */
-    return seat_screens(seat) > 0 && g_accounts[seat][0];
+    return seat_screens(seat) > 0;
 }
 
 static BOOL save_all(void)
@@ -125,7 +127,8 @@ static void layout(void)
 
     int by = rc.bottom - barH + S(14), bh = S(32);
     MoveWindow(g_btnFind, margin, by, S(130), bh, TRUE);
-    MoveWindow(g_btnRefresh, margin + S(140), by, S(100), bh, TRUE);
+    MoveWindow(g_btnRefresh, margin + S(140), by, S(90), bh, TRUE);
+    MoveWindow(g_btnSharing, margin + S(240), by, S(190), bh, TRUE);
     MoveWindow(g_btnStart, rc.right - margin - S(170), by, S(170), bh, TRUE);
     MoveWindow(g_btnSave, rc.right - margin - S(170) - S(130), by, S(120), bh, TRUE);
     int sy = g_rcSeats.bottom - bh;
@@ -206,7 +209,8 @@ static void section_title(HDC dc, RECT area, int number, const WCHAR *title, con
 static void paint_screens(HDC dc)
 {
     RECT area = g_rcScreens, stage;
-    section_title(dc, area, 1, L"Screens", L"Click a screen to choose which workplace uses it.");
+    section_title(dc, area, 1, L"Screens: monitors, TVs and laptop displays",
+                  L"Every connected screen appears here. Click one to choose its workplace. Missing one? Press Win+P, Extend.");
     SetRect(&stage, area.left, area.top + S(56), area.right, area.bottom);
     box(dc, stage, S(10), COL_PANEL, COL_LINE, 1);
     if (g_screenCount == 0) {
@@ -247,8 +251,12 @@ static void paint_screens(HDC dc)
         text(dc, g_fHuge, color, big, DT_CENTER | DT_VCENTER | DT_SINGLELINE, line);
         seat_label(s->seat, label, 32);
         text(dc, g_fBold, color, mid, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS, label);
-        _snwprintf(line, 64, L"%ld \x00D7 %ld%ls", s->area.right - s->area.left, s->area.bottom - s->area.top,
-                   s->primary ? L"  \x00B7  main" : L"");
+        if (s->name[0] || s->connector[0])
+            _snwprintf(line, 64, L"%ls%ls%ls", s->name[0] ? s->name : L"Screen", s->connector[0] ? L"  \x00B7  " : L"", s->connector);
+        else
+            _snwprintf(line, 64, L"%ld \x00D7 %ld%ls", s->area.right - s->area.left, s->area.bottom - s->area.top,
+                       s->primary ? L"  \x00B7  main" : L"");
+        line[63] = 0;
         text(dc, g_fSmall, COL_MUTED, low, DT_CENTER | DT_SINGLELINE | DT_END_ELLIPSIS, line);
     }
 }
@@ -378,26 +386,22 @@ static void paint_seats(HDC dc)
             if (!parts[p].yes && !missing) missing = parts[p].word;
         }
         WCHAR who[120];
-        BOOL hasAccount = seat == 0 || g_accounts[seat][0];
-        RECT acct = { card.left + S(38), card.top + S(62), card.right - S(12), card.top + S(82) };
-        badge(dc, card.left + S(16), card.top + S(64), S(16), hasAccount);
-        if (seat == 0) lstrcpynW(who, L"Signs in as: you", 120);
-        else if (hasAccount) _snwprintf(who, 120, L"Signs in as: %ls  (click to change)", g_accounts[seat]);
-        else lstrcpynW(who, L"Signs in as: \x2014  click to choose", 120);
+        RECT share = { card.left + S(16), card.top + S(62), card.right - S(12), card.top + S(82) };
         BOOL hover = g_hoverKind == HIT_SEAT && g_hoverIndex == seat;
-        text(dc, hover ? g_fBold : g_fText, hasAccount ? COL_TEXT : COL_WARN, acct, DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS, who);
+        if (seat == 0) lstrcpynW(who, L"The main Windows desktop", 120);
+        else share_summary(seat, who, 120);
+        text(dc, hover ? g_fBold : g_fText, seat > 0 && !(g_share[seat] & SHARE_ON) ? COL_WARN : COL_TEXT, share,
+             DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS, who);
 
         RECT tip = { card.left + S(16), card.top + S(88), card.right - S(12), card.bottom - S(6) };
         WCHAR tipText[90];
         if (ready && seat > 0 && missing)
-            lstrcpynW(tipText, L"Keyboard and mouse: picked by pressing them at start.", 90);
+            lstrcpynW(tipText, L"Its keyboard and mouse are picked at start.", 90);
         else if (ready)
             lstrcpynW(tipText, seat == 0 ? L"This is the workplace you use now." : L"Has everything it needs.", 90);
-        else if (missing && (seat == 0 || missing == parts[0].word))
+        else
             _snwprintf(tipText, 90, L"Still needs a %ls. Click one on the left.",
                        missing == parts[0].word ? L"screen" : missing == parts[1].word ? L"keyboard" : L"mouse");
-        else
-            lstrcpynW(tipText, L"Still needs a Windows account. Click the line above.", 90);
         text(dc, g_fSmall, COL_MUTED, tip, DT_SINGLELINE | DT_END_ELLIPSIS, tipText);
     }
 }
@@ -421,7 +425,7 @@ static void paint(HDC dc)
     RECT noteText = { S(20), S(78), rc.right - S(20), S(110) };
     text(dc, g_fText, COL_NOTE_TX, noteText, DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS,
          g_demo ? L"Demo: these screens and devices are examples, not your real hardware."
-         : is_server_os() ? L"Each extra workplace signs in to its own Windows account. When everything is ready, press Start workplaces."
+         : is_server_os() ? L"Give each workplace a screen, then press Start workplaces. Each workplace works on its own, separate from the others."
                           : L"Note: Windows 10 and 11 allow only one person signed in at a time. Several people at once needs Windows Server.");
 
     paint_screens(dc);
@@ -431,7 +435,7 @@ static void paint(HDC dc)
     fill(dc, &g_rcBar, COL_PANEL);
     RECT line = { 0, g_rcBar.top, rc.right, g_rcBar.top + 1 };
     fill(dc, &line, COL_LINE);
-    RECT status = { S(20) + S(256), g_rcBar.top, rc.right - S(20) - S(310), g_rcBar.bottom };
+    RECT status = { S(20) + S(446), g_rcBar.top, rc.right - S(20) - S(310), g_rcBar.bottom };
     text(dc, g_fText, g_dirty && !g_status[0] ? COL_WARN : COL_MUTED, status, DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS,
          g_status[0] ? g_status : g_dirty ? L"You have changes that are not saved." : L"");
 }
@@ -495,7 +499,7 @@ static void remove_last_seat(void)
     if (last < 1) return;
     for (int i = 0; i < g_screenCount; i++) if (g_screens[i].seat == last) g_screens[i].seat = 0;
     for (int i = 0; i < g_deviceCount; i++) if (g_devices[i].seat == last) g_devices[i].seat = 0;
-    g_accounts[last][0] = 0;
+    g_share[last] = SHARE_DEFAULT;
     g_seatCount--;
     _snwprintf(g_status, 300, L"Workplace %d removed. Its screens and devices went back to Workplace 1.", last + 1);
     changed();
@@ -573,70 +577,60 @@ static BOOL confirm_close(void)
     return TRUE;
 }
 
-static BOOL store_password(int seat, const WCHAR *account, const WCHAR *password)
+static void share_summary(int seat, WCHAR *out, size_t chars)
 {
-    WCHAR target[64], user[MAX_COMPUTERNAME_LENGTH + ACCOUNT_CHARS + 2], comp[MAX_COMPUTERNAME_LENGTH + 1];
-    DWORD n = MAX_COMPUTERNAME_LENGTH + 1;
-    if (!GetComputerNameW(comp, &n)) lstrcpynW(comp, L".", MAX_COMPUTERNAME_LENGTH + 1);
-    _snwprintf(user, MAX_COMPUTERNAME_LENGTH + ACCOUNT_CHARS + 2, L"%ls\\%ls", comp, account);
-    seat_cred_target(seat, target, 64);
-    CREDENTIALW c;
-    ZeroMemory(&c, sizeof(c));
-    c.Type = CRED_TYPE_GENERIC; /* the Remote Desktop client reads TERMSRV/<host> */
-    c.TargetName = target;
-    c.UserName = user;
-    c.CredentialBlob = (LPBYTE)password;
-    c.CredentialBlobSize = (DWORD)(wcslen(password) * sizeof(WCHAR));
-    c.Persist = CRED_PERSIST_LOCAL_MACHINE;
-    return CredWriteW(&c, 0);
+    int f = g_share[seat];
+    if (!(f & SHARE_ON)) { lstrcpynW(out, L"Switched off", (int)chars); return; }
+    if (!(f & (SHARE_CLIPBOARD | SHARE_FOLDER))) { lstrcpynW(out, L"Shares nothing (private)", (int)chars); return; }
+    _snwprintf(out, chars, L"Shares: %ls%ls%ls", (f & SHARE_CLIPBOARD) ? L"copy and paste" : L"",
+               (f & SHARE_CLIPBOARD) && (f & SHARE_FOLDER) ? L", " : L"", (f & SHARE_FOLDER) ? L"folder" : L"");
+    out[chars - 1] = 0;
 }
 
-static INT_PTR CALLBACK account_proc(HWND dlg, UINT msg, WPARAM wp, LPARAM lp)
+static INT_PTR CALLBACK sharing_proc(HWND dlg, UINT msg, WPARAM wp, LPARAM lp)
 {
-    static int seat;
+    (void)lp;
     if (msg == WM_INITDIALOG) {
-        WCHAR info[200];
-        seat = (int)lp;
-        _snwprintf(info, 200, L"Workplace %d signs in to this Windows account. Every workplace needs its own account, "
-                              L"different from yours.", seat + 1);
-        SetDlgItemTextW(dlg, IDC_ACC_INFO, info);
-        SetDlgItemTextW(dlg, IDC_ACC_NAME, g_accounts[seat]);
-        SendDlgItemMessageW(dlg, IDC_ACC_NAME, EM_LIMITTEXT, 20, 0);
-        SendDlgItemMessageW(dlg, IDC_ACC_PASS, EM_LIMITTEXT, 127, 0);
-        SendDlgItemMessageW(dlg, IDC_ACC_PASS2, EM_LIMITTEXT, 127, 0);
+        WCHAR folder[MAX_PATH], info[900];
+        shared_folder(folder, MAX_PATH);
+        _snwprintf(info, 900,
+                   L"Switched on: the workplace starts when you press Start workplaces.\r\n\r\n"
+                   L"Copy and paste: text copied there can be pasted in Workplace 1, and the other way round.\r\n\r\n"
+                   L"Shared folder: the workplace can open %ls. Put files there to pass them on.\r\n\r\n"
+                   L"Sound: the workplace can play sound on this PC's speakers.\r\n\r\n"
+                   L"Programs, files and screen content of one workplace are never shown in another.", folder);
+        info[899] = 0;
+        SetDlgItemTextW(dlg, IDC_SHARE_INFO, info);
+        for (int seat = 1; seat < MAX_SEATS; seat++) {
+            for (int col = 0; col < 4; col++) {
+                HWND box = GetDlgItem(dlg, IDC_SHARE_BASE + seat * 10 + col);
+                ShowWindow(box, seat < g_seatCount ? SW_SHOW : SW_HIDE);
+                CheckDlgButton(dlg, IDC_SHARE_BASE + seat * 10 + col, (g_share[seat] & (1 << col)) ? BST_CHECKED : BST_UNCHECKED);
+            }
+            ShowWindow(GetDlgItem(dlg, IDC_SHARE_BASE + seat * 10 + 9), seat < g_seatCount ? SW_SHOW : SW_HIDE);
+        }
         return TRUE;
     }
     if (msg != WM_COMMAND) return FALSE;
     if (LOWORD(wp) == IDCANCEL) { EndDialog(dlg, IDCANCEL); return TRUE; }
     if (LOWORD(wp) != IDOK) return FALSE;
-
-    WCHAR name[ACCOUNT_CHARS], pass[128], pass2[128], me[ACCOUNT_CHARS + 200];
-    DWORD meLen = ACCOUNT_CHARS + 200;
-    const WCHAR *problem = NULL;
-    GetDlgItemTextW(dlg, IDC_ACC_NAME, name, ACCOUNT_CHARS);
-    GetDlgItemTextW(dlg, IDC_ACC_PASS, pass, 128);
-    GetDlgItemTextW(dlg, IDC_ACC_PASS2, pass2, 128);
-    if (!GetUserNameW(me, &meLen)) me[0] = 0;
-    if (!valid_account_name(name)) problem = L"Use an account name of up to 20 letters or digits, without symbols like \\ / : * ? \" < > |.";
-    else if (lstrcmpiW(name, me) == 0) problem = L"This is your own account. The extra workplace needs a different one.";
-    else if (!pass[0]) problem = L"Enter the password. Windows does not allow Remote Desktop sign-in without one.";
-    else if (lstrcmpW(pass, pass2) != 0) problem = L"The two passwords are different.";
-    for (int s = 1; s < g_seatCount && !problem; s++)
-        if (s != seat && lstrcmpiW(name, g_accounts[s]) == 0) problem = L"Another workplace already uses this account.";
-    if (!problem && !store_password(seat, name, pass)) problem = L"Windows did not let OpenSeat save the password.";
-    SecureZeroMemory(pass, sizeof(pass));
-    SecureZeroMemory(pass2, sizeof(pass2));
-    if (problem) { MessageBoxW(dlg, problem, L"OpenSeat", MB_OK | MB_ICONWARNING); return TRUE; }
-    lstrcpynW(g_accounts[seat], name, ACCOUNT_CHARS);
-    EndDialog(dlg, IDOK);
+    BOOL different = FALSE;
+    for (int seat = 1; seat < g_seatCount; seat++) {
+        int flags = 0;
+        for (int col = 0; col < 4; col++)
+            if (IsDlgButtonChecked(dlg, IDC_SHARE_BASE + seat * 10 + col) == BST_CHECKED) flags |= 1 << col;
+        if (flags != g_share[seat]) different = TRUE;
+        g_share[seat] = flags;
+    }
+    EndDialog(dlg, different ? IDOK : IDCANCEL);
     return TRUE;
 }
 
-static void edit_account(int seat)
+static void edit_sharing(void)
 {
-    if (g_demo) { set_status(L"Demo: accounts cannot be set in demo mode."); return; }
-    if (DialogBoxParamW(GetModuleHandleW(NULL), MAKEINTRESOURCEW(IDD_ACCOUNT), g_wnd, account_proc, (LPARAM)seat) == IDOK) {
-        _snwprintf(g_status, 300, L"Workplace %d signs in as %ls. Not saved yet.", seat + 1, g_accounts[seat]);
+    if (g_seatCount < 2) { set_status(L"Add a workplace first. Sharing is set for each extra workplace."); return; }
+    if (DialogBoxParamW(GetModuleHandleW(NULL), MAKEINTRESOURCEW(IDD_SHARING), g_wnd, sharing_proc, 0) == IDOK) {
+        lstrcpynW(g_status, L"Sharing changed. Not saved yet. It applies the next time the workplaces start.", 300);
         changed();
     }
 }
@@ -646,8 +640,8 @@ static void start_workplaces(void)
     WCHAR msg[300];
     for (int s = 1; s < g_seatCount; s++) {
         msg[0] = 0;
-        if (seat_screens(s) == 0) _snwprintf(msg, 300, L"Workplace %d needs a screen first.", s + 1);
-        else if (!g_accounts[s][0]) _snwprintf(msg, 300, L"Workplace %d needs a Windows account first. Click its card.", s + 1);
+        if ((g_share[s] & SHARE_ON) && seat_screens(s) == 0)
+            _snwprintf(msg, 300, L"Workplace %d needs a screen first. Click a screen and choose Workplace %d.", s + 1, s + 1);
         if (msg[0]) { set_status(msg); MessageBeep(MB_ICONWARNING); return; }
     }
     if (g_dirty && !save_all()) {
@@ -671,6 +665,40 @@ static void start_workplaces(void)
                                                      : L"Could not start the workplaces.");
     }
     update_buttons();
+    InvalidateRect(g_wnd, NULL, FALSE);
+}
+
+/* Look for screens and devices again, keeping the choices made so far. */
+static void refresh_hardware(BOOL automatic)
+{
+    Screen *oldScreens = malloc(sizeof(g_screens));
+    Device *oldDevices = malloc(sizeof(g_devices));
+    int oldS = g_screenCount, oldD = g_deviceCount, moreScreens = 0;
+    if (!oldScreens || !oldDevices) { free(oldScreens); free(oldDevices); return; }
+    memcpy(oldScreens, g_screens, sizeof(g_screens));
+    memcpy(oldDevices, g_devices, sizeof(g_devices));
+    find_hardware();
+    for (int i = 0; i < g_screenCount; i++) {
+        BOOL known = FALSE;
+        g_screens[i].seat = 0;
+        for (int j = 0; j < oldS; j++)
+            if (lstrcmpiW(g_screens[i].key, oldScreens[j].key) == 0) { g_screens[i].seat = oldScreens[j].seat; known = TRUE; }
+        if (!known) moreScreens++;
+    }
+    for (int i = 0; i < g_deviceCount; i++) {
+        g_devices[i].seat = 0;
+        for (int j = 0; j < oldD; j++)
+            if (lstrcmpiW(g_devices[i].key, oldDevices[j].key) == 0) g_devices[i].seat = oldDevices[j].seat;
+    }
+    free(oldScreens);
+    free(oldDevices);
+    layout();
+    if (automatic && moreScreens)
+        _snwprintf(g_status, 300, L"New screen connected. Click it above to give it to a workplace.");
+    else if (automatic && g_screenCount < oldS)
+        _snwprintf(g_status, 300, L"A screen was disconnected.");
+    else if (!automatic)
+        _snwprintf(g_status, 300, L"Found %d screen(s) and %d keyboard/mouse device(s).", g_screenCount, g_deviceCount);
     InvalidateRect(g_wnd, NULL, FALSE);
 }
 
@@ -712,6 +740,7 @@ static LRESULT CALLBACK wnd_proc(HWND wnd, UINT msg, WPARAM wp, LPARAM lp)
         g_btnAdd = make_button(L"Add a workplace", ID_ADD, FALSE);
         g_btnRemove = make_button(L"Remove last", ID_REMOVE, FALSE);
         g_btnStart = make_button(L"Start workplaces", ID_START, FALSE);
+        g_btnSharing = make_button(L"Connections and sharing", ID_SHARING, FALSE);
         find_hardware();
         load_setup();
         update_buttons();
@@ -769,7 +798,7 @@ static LRESULT CALLBACK wnd_proc(HWND wnd, UINT msg, WPARAM wp, LPARAM lp)
         POINT pt = { GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
         int index, kind = hit_test(pt, &index);
         if (kind == HIT_SEAT) {
-            edit_account(index);
+            edit_sharing();
         } else if (kind != HIT_NONE) {
             RECT r = kind == HIT_SCREEN ? g_screens[index].draw : g_devices[index].draw;
             POINT at = { kind == HIT_SCREEN ? r.left : r.right - S(144), r.bottom - (kind == HIT_SCREEN ? 0 : S(8)) };
@@ -790,6 +819,7 @@ static LRESULT CALLBACK wnd_proc(HWND wnd, UINT msg, WPARAM wp, LPARAM lp)
         BOOL any = FALSE;
         DWORD now = GetTickCount();
         if (wp == 2) { demo_find_tick(); return 0; }
+        if (wp == 3) { KillTimer(wnd, 3); if (!g_demo) refresh_hardware(TRUE); return 0; }
         for (int i = 0; i < g_deviceCount; i++) {
             if (!g_devices[i].flashUntil) continue;
             if ((int)(g_devices[i].flashUntil - now) <= 0) g_devices[i].flashUntil = 0;
@@ -826,32 +856,12 @@ static LRESULT CALLBACK wnd_proc(HWND wnd, UINT msg, WPARAM wp, LPARAM lp)
                 set_finding(!g_finding);
             }
             return 0;
-        case ID_REFRESH: {
-            /* Keep choices made so far for hardware that is still there. */
-            Screen *oldScreens = malloc(sizeof(g_screens));
-            Device *oldDevices = malloc(sizeof(g_devices));
-            int oldS = g_screenCount, oldD = g_deviceCount;
-            if (!oldScreens || !oldDevices) { free(oldScreens); free(oldDevices); return 0; }
-            memcpy(oldScreens, g_screens, sizeof(g_screens));
-            memcpy(oldDevices, g_devices, sizeof(g_devices));
-            find_hardware();
-            for (int i = 0; i < g_screenCount; i++) {
-                g_screens[i].seat = 0;
-                for (int j = 0; j < oldS; j++)
-                    if (lstrcmpiW(g_screens[i].key, oldScreens[j].key) == 0) g_screens[i].seat = oldScreens[j].seat;
-            }
-            for (int i = 0; i < g_deviceCount; i++) {
-                g_devices[i].seat = 0;
-                for (int j = 0; j < oldD; j++)
-                    if (lstrcmpiW(g_devices[i].key, oldDevices[j].key) == 0) g_devices[i].seat = oldDevices[j].seat;
-            }
-            free(oldScreens);
-            free(oldDevices);
-            layout();
-            _snwprintf(g_status, 300, L"Found %d screen(s) and %d keyboard/mouse device(s).", g_screenCount, g_deviceCount);
-            InvalidateRect(wnd, NULL, FALSE);
+        case ID_REFRESH:
+            refresh_hardware(FALSE);
             return 0;
-        }
+        case ID_SHARING:
+            edit_sharing();
+            return 0;
         case ID_START:
             start_workplaces();
             return 0;
@@ -864,6 +874,12 @@ static LRESULT CALLBACK wnd_proc(HWND wnd, UINT msg, WPARAM wp, LPARAM lp)
         }
         break;
     }
+    case WM_DISPLAYCHANGE:
+    case WM_DEVICECHANGE:
+        /* A screen, keyboard or mouse was plugged in or removed.  Windows sends
+         * several of these in a row, so wait a moment and look once. */
+        if (msg == WM_DISPLAYCHANGE || wp == DBT_DEVNODES_CHANGED) SetTimer(wnd, 3, 900, NULL);
+        break;
     case WM_CLOSE:
         if (confirm_close()) DestroyWindow(wnd);
         return 0;

@@ -21,7 +21,7 @@ mkdir -p "$dir"
 printf '%s\r\n' '[Setup]' 'Workplaces=2' '[Screens]' 'ktest-screen-1=1' 'ktest-screen-2=2' \
   '[Devices]' 'kfake-kb-1=1' 'kfake-kb-2=2' 'kfake-mouse-1=1' \
   '[Hardware]' 'kfake-kb-1=HID\VID_1111&PID_0001' 'kfake-kb-2=HID\VID_2222&PID_0002' 'kfake-mouse-1=HID\VID_1111&PID_0011' \
-  '[Accounts]' 'Workplace2=anna' > "$dir/setup.ini"
+  > "$dir/setup.ini"
 cat > "$work/script.txt" <<'S'
 hw 1 HID\VID_1111&PID_0001
 hw 2 HID\VID_2222&PID_0002

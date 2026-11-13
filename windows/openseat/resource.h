@@ -1,5 +1,3 @@
-#define IDD_ACCOUNT 100
-#define IDC_ACC_NAME 101
-#define IDC_ACC_PASS 102
-#define IDC_ACC_PASS2 103
-#define IDC_ACC_INFO 104
+#define IDD_SHARING 110
+#define IDC_SHARE_BASE 200 /* 200 + workplace index * 10 + column; +9 is the row label */
+#define IDC_SHARE_INFO 290
