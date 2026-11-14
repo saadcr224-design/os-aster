@@ -39,6 +39,7 @@ static DWORD g_prevTaskbar, g_prevTaskbarMode;
 static BOOL g_hadTaskbar, g_hadTaskbarMode, g_test;
 static WCHAR g_note[200];
 static FILETIME g_setupTime;
+static BOOL g_live[MAX_SEATS]; /* started by the person and able to run */
 static BOOL g_auto;
 
 static int S(int v) { return MulDiv(v, g_dpi, 96); }
@@ -94,6 +95,29 @@ static int seat_of_device(HANDLE device)
         for (int h = 0; h < g_devices[i].handleCount; h++)
             if (g_devices[i].handles[h] == device) return g_devices[i].seat;
     return NOT_USED - 1; /* unknown device, e.g. plugged in after VISION started */
+}
+
+/* Which workplaces run: the ones started in the setup window that have what
+ * they need.  Each one is reported back as Running or Error. */
+static int update_live(void)
+{
+    int count = 0;
+    for (int s = 0; s < MAX_SEATS; s++) {
+        WCHAR why[200];
+        BOOL wanted = s < g_seatCount && want_running(s);
+        g_live[s] = FALSE;
+        if (!wanted) { report_status(s, WS_NOT_STARTED, NULL); continue; }
+        if (seat_problem(s, why, 200)) { report_status(s, WS_ERROR, why); continue; }
+        g_live[s] = TRUE;
+        report_status(s, WS_RUNNING, NULL);
+        count++;
+    }
+    if (g_pointerSeat >= 0 && !g_live[g_pointerSeat]) { g_pointerSeat = -1; ClipCursor(NULL); }
+    if (!g_live[g_active]) {
+        g_active = 0;
+        for (int s = 0; s < MAX_SEATS; s++) if (g_live[s]) { g_active = s; break; }
+    }
+    return count;
 }
 
 /* ---- which windows to look after ----------------------------------------- */
@@ -176,10 +200,11 @@ static void CALLBACK win_event(HWINEVENTHOOK hook, DWORD event, HWND w, LONG obj
         HWND owner = GetWindow(w, GW_OWNER);
         Tracked *ot = owner ? find_tracked(GetAncestor(owner, GA_ROOT)) : NULL;
         int seat = ot ? ot->seat : g_active;
+        if (seat < 0 || !g_live[seat]) return; /* that workplace is not started: leave the window alone */
         t = track(w, seat);
         /* Let the program finish positioning it, then move it. */
         PostMessageW(g_status, WM_PLACE, (WPARAM)w, 0);
-    } else if (event == EVENT_SYSTEM_MOVESIZEEND && t) {
+    } else if (event == EVENT_SYSTEM_MOVESIZEEND && t && t->seat >= 0 && g_live[t->seat]) {
         if (seat_of_window(w) != t->seat) {
             lstrcpynW(g_note, L"Windows stay on their own workplace's screen, so that one was moved back.", 200);
             InvalidateRect(g_status, NULL, FALSE);
@@ -196,7 +221,7 @@ static void on_input(HRAWINPUT raw)
     UINT size = sizeof(in);
     if (GetRawInputData(raw, RID_INPUT, &in, &size, sizeof(RAWINPUTHEADER)) == (UINT)-1) return;
     int seat = seat_of_device(in.header.hDevice);
-    if (seat < 0) return; /* switched off or unknown: leave things as they are */
+    if (seat < 0 || !g_live[seat]) return; /* not started, switched off or unknown: leave things as they are */
     if (seat != g_active) {
         g_active = seat;
         InvalidateRect(g_status, NULL, FALSE);
@@ -272,12 +297,14 @@ static void reload_setup(void)
     find_hardware();
     load_setup();
     if (g_active >= g_seatCount) g_active = 0;
+    update_live();
     if (g_pointerSeat >= g_seatCount || (g_pointerSeat >= 0 && seat_first_screen(g_pointerSeat) < 0)) {
         g_pointerSeat = -1;
         ClipCursor(NULL);
     }
     for (int i = 0; i < g_winCount; i++)
-        if (IsWindow(g_win[i].wnd) && g_win[i].seat >= 0 && g_win[i].seat < g_seatCount) place(g_win[i].wnd, g_win[i].seat);
+        if (IsWindow(g_win[i].wnd) && g_win[i].seat >= 0 && g_win[i].seat < g_seatCount && g_live[g_win[i].seat])
+            place(g_win[i].wnd, g_win[i].seat);
     lstrcpynW(g_note, L"The new setup is in use.", 200);
     InvalidateRect(g_status, NULL, FALSE);
 }
@@ -286,6 +313,7 @@ static void reload_setup(void)
 
 static void stop_keeping_apart(void)
 {
+    for (int s = 0; s < MAX_SEATS; s++) report_status(s, WS_NOT_STARTED, NULL);
     for (int i = 0; i < 3; i++) if (g_hooks[i]) { UnhookWinEvent(g_hooks[i]); g_hooks[i] = NULL; }
     ClipCursor(NULL);
     if (!g_test) set_taskbars(FALSE);
@@ -310,8 +338,11 @@ static void paint(HWND w, HDC dc)
         int scr = seat_first_screen(s);
         int windows = 0;
         for (int i = 0; i < g_winCount; i++) windows += IsWindow(g_win[i].wnd) && g_win[i].seat == s;
-        if (scr < 0) _snwprintf(line, 200, L"Workplace %d  \x00B7  no screen", s + 1);
-        else _snwprintf(line, 200, L"Workplace %d  \x00B7  screen %d  \x00B7  %d window%ls%ls", s + 1, scr + 1, windows,
+        WCHAR label[NAME_CHARS];
+        seat_name(s, label, NAME_CHARS);
+        if (!g_live[s]) _snwprintf(line, 200, L"%ls  \x00B7  %ls", label, want_running(s) ? L"cannot start" : L"not started");
+        else if (scr < 0) _snwprintf(line, 200, L"%ls  \x00B7  no screen", label);
+        else _snwprintf(line, 200, L"%ls  \x00B7  screen %d  \x00B7  %d window%ls%ls", label, scr + 1, windows,
                         windows == 1 ? L"" : L"s", s == g_active ? L"   (working now)" : L"");
         RECT r = { S(20), y, rc.right - S(20), y + S(22) };
         SetTextColor(dc, s == g_active ? RGB(30, 110, 60) : RGB(28, 32, 38));
@@ -364,6 +395,20 @@ static LRESULT CALLBACK status_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
     case WM_TIMER: {
         FILETIME now = setup_time();
         if (CompareFileTime(&now, &g_setupTime) != 0) reload_setup();
+        BOOL before[MAX_SEATS], changedLive = FALSE, anyWanted = FALSE;
+        memcpy(before, g_live, sizeof(before));
+        update_live();
+        for (int s = 0; s < MAX_SEATS; s++) {
+            if (before[s] != g_live[s]) changedLive = TRUE;
+            if (s < g_seatCount && want_running(s)) anyWanted = TRUE;
+        }
+        if (changedLive) {
+            /* A workplace was just started: put its windows where they belong. */
+            for (int i = 0; i < g_winCount; i++)
+                if (IsWindow(g_win[i].wnd) && g_win[i].seat >= 0 && g_live[g_win[i].seat]) place(g_win[i].wnd, g_win[i].seat);
+            InvalidateRect(w, NULL, FALSE);
+        }
+        if (!anyWanted) DestroyWindow(w); /* every workplace was stopped */
         return 0;
     }
     case WM_DESTROY:
@@ -405,24 +450,16 @@ int run_keep_apart(HINSTANCE inst, BOOL test, BOOL automatic)
 
     find_hardware();
     load_setup();
-    int withScreen = 0;
-    for (int s = 0; s < g_seatCount; s++) withScreen += seat_first_screen(s) >= 0;
-    if (withScreen < 2) {
-        if (!automatic) MessageBoxW(NULL, L"Give at least two workplaces a screen first.", L"VISION", MB_OK | MB_ICONWARNING);
-        return 1;
-    }
-    for (int s = 1; s < g_seatCount; s++) {
-        if (seat_first_screen(s) < 0) continue;
-        if (!seat_has(s, DEV_KEYBOARD) || !seat_has(s, DEV_MOUSE)) {
-            WCHAR msg[200];
-            _snwprintf(msg, 200, L"Workplace %d needs its own keyboard and mouse. Choose them in the list of keyboards and mice, "
-                                 L"or use \"Find a device\" to see which is which.", s + 1);
-            if (!automatic) MessageBoxW(NULL, msg, L"VISION", MB_OK | MB_ICONWARNING);
-            return 1;
-        }
+    /* Started with Windows: carry on with the workplaces that were running
+     * before; if none were, there is nothing to do. */
+    if (!update_live() && automatic) {
+        BOOL any = FALSE;
+        for (int s2 = 0; s2 < g_seatCount; s2++) any |= want_running(s2);
+        if (!any) return 0;
     }
     WCHAR v[8];
     if (test && GetEnvironmentVariableW(L"OPENSEAT_TEST_ACTIVE", v, 8)) g_active = _wtoi(v) - 1;
+    if (g_active < 0 || g_active >= MAX_SEATS) g_active = 0;
 
     WNDCLASSEXW cls;
     ZeroMemory(&cls, sizeof(cls));
@@ -462,7 +499,7 @@ int run_keep_apart(HINSTANCE inst, BOOL test, BOOL automatic)
         }
 
     g_setupTime = setup_time();
-    SetTimer(g_status, 1, 2000, NULL);
+    SetTimer(g_status, 1, 700, NULL);
     /* Started with Windows: stay out of the way, as a button on the taskbar. */
     ShowWindow(g_status, automatic ? SW_SHOWMINNOACTIVE : SW_SHOWNORMAL);
     MSG msg;
