@@ -209,34 +209,6 @@ A small window shows each workplace's state. **Stop** (or Ctrl+Alt+Shift+S on
 workplace 1's keyboard) ends the extra workplaces; their programs keep running
 and come back at the next start.
 
-### Starting workplaces one by one
-
-Every workplace card has its own **Start** button. It starts only that
-workplace, with the name and settings you entered (VISION saves them first and
-never replaces them with automatic values). The card shows **Not started**,
-**Starting**, **Running** or **Error** (with the reason, for example "It has
-no screen"). A second click while it starts does nothing; **Stop** stops only
-that workplace. Removing a running workplace stops it. This works the same
-with one, two, three or more workplaces. Click a card to rename the workplace
-or change its settings.
-
-![Start buttons on each workplace](docs/windows-start.png)
-
-### Saved setups
-
-**Save setup** asks for a name and keeps the whole current state of every
-workplace (screens, keyboards and mice, names, sharing) as a new saved setup
-with an ID and the date and time. "Setup saved successfully" appears when it
-is done. Each saved setup is its own file in
-`%APPDATA%\VISION\Saved setups`; a new save never changes an older one.
-
-**Saved setups** (above the workplace cards) lists them with their details and
-everything each one holds. **Open** brings a setup back exactly as it was saved;
-**Rename** and **Delete** work on the selected one. Saved setups stay after
-VISION or the PC restarts.
-
-![Saved setups](docs/windows-saved-setups.png)
-
 ### Connections and sharing
 
 Workplaces are separate: programs, files and screen content of one are not
