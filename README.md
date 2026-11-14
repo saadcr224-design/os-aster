@@ -160,6 +160,14 @@ download button, features, requirements and questions. It is plain HTML with
 no build step, so it can be put online with GitHub Pages (Settings, Pages,
 "Deploy from a branch", folder `/docs`) or any other web host.
 
+### Installing Windows Server automatically
+
+[`docs/download/VISION-Server-USB-kit.zip`](docs/download/VISION-Server-USB-kit.zip)
+holds `autounattend.xml` and VISION's setup. Copied onto a Windows Server 2022
+USB stick (made with Rufus), it installs Windows Server by itself, then
+installs and opens VISION. You only choose the disk. It erases that disk, so
+back up first. See `windows/server-usb/README.txt`.
+
 ### What you need
 
 - **Windows Server 2016 or newer.** Windows 10 and 11 allow only one person
