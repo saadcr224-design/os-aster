@@ -291,7 +291,7 @@ static void paint_screens(HDC dc)
 {
     RECT area = g_rcScreens, stage;
     section_title(dc, area, 1, L"Screens: monitors, TVs and laptop displays",
-                  L"Every screen connected by cable is listed here. Use the button on its row to choose its workplace.");
+                  L"Every connected screen gets its own workplace. Use the button on a row to change which one.");
     SetRect(&stage, area.left, area.top + S(56), area.right, area.bottom);
     box(dc, stage, S(10), COL_PANEL, COL_LINE, 1);
     paint_screen_list(dc, stage);
@@ -564,8 +564,11 @@ static void choose_seat(int kind, int index, POINT screenPt)
     HMENU menu = CreatePopupMenu();
     int current = kind == HIT_SCREEN ? g_screens[index].seat : g_devices[index].seat;
     for (int seat = 0; seat < g_seatCount; seat++) {
-        WCHAR label[40];
-        seat_label(seat, label, 40);
+        WCHAR label[80];
+        int other = kind == HIT_SCREEN ? seat_first_screen(seat) : -1;
+        seat_label(seat, label, 80);
+        if (kind == HIT_SCREEN && seat != current && other >= 0) /* one screen per workplace: this swaps them */
+            _snwprintf(label + wcslen(label), 80 - wcslen(label), L"   (swap with screen %d)", other + 1);
         AppendMenuW(menu, MF_STRING | (seat == current ? MF_CHECKED : 0), ID_MENU_SEAT + seat, label);
     }
     if (g_seatCount < MAX_SEATS) AppendMenuW(menu, MF_STRING, ID_MENU_SEAT + g_seatCount, L"New workplace");
@@ -583,8 +586,18 @@ static void assign(int kind, int index, int seat)
     if (seat >= g_seatCount && seat < MAX_SEATS) g_seatCount = seat + 1;
     seat_label(seat, label, 40);
     if (kind == HIT_SCREEN && index < g_screenCount) {
+        /* One screen per workplace: a screen already there swaps places with this one. */
+        int old = g_screens[index].seat, swapped = -1;
+        for (int i = 0; seat != NOT_USED && i < g_screenCount; i++)
+            if (i != index && g_screens[i].seat == seat) { g_screens[i].seat = old; swapped = i; }
         g_screens[index].seat = seat;
-        _snwprintf(msg, 300, L"Screen %d \x2192 %ls. Not saved yet.", index + 1, label);
+        if (swapped >= 0) {
+            WCHAR oldLabel[40];
+            seat_label(old, oldLabel, 40);
+            _snwprintf(msg, 300, L"Screen %d \x2192 %ls, screen %d \x2192 %ls. Not saved yet.", index + 1, label, swapped + 1, oldLabel);
+        } else {
+            _snwprintf(msg, 300, L"Screen %d \x2192 %ls. Not saved yet.", index + 1, label);
+        }
     } else if (kind == HIT_DEVICE && index < g_deviceCount) {
         g_devices[index].seat = seat;
         _snwprintf(msg, 300, L"%ls \x2192 %ls. Not saved yet.", g_devices[index].name, label);
@@ -594,6 +607,51 @@ static void assign(int kind, int index, int seat)
     msg[299] = 0;
     lstrcpynW(g_status, msg, 300);
     changed();
+}
+
+/* Give every screen a workplace of its own: screen 1 stays with workplace 1,
+ * each further screen gets the next workplace (up to the limit). */
+static int one_workplace_per_screen(void)
+{
+    int changes = 0;
+    for (int i = 0; i < g_screenCount; i++) {
+        int want = i < MAX_SEATS ? i : NOT_USED;
+        if (g_screens[i].seat != want) { g_screens[i].seat = want; changes++; }
+    }
+    int needed = g_screenCount < MAX_SEATS ? g_screenCount : MAX_SEATS;
+    if (needed < 1) needed = 1;
+    if (g_seatCount < needed) { g_seatCount = needed; changes++; }
+    return changes;
+}
+
+/* A newly connected screen gets a new workplace of its own straight away. */
+static void give_new_screen_a_workplace(int i)
+{
+    for (int seat = 0; seat < g_seatCount; seat++)
+        if (seat_first_screen(seat) < 0) { g_screens[i].seat = seat; return; } /* reuse a workplace that has no screen */
+    if (g_seatCount < MAX_SEATS) {
+        g_share[g_seatCount] = SHARE_DEFAULT;
+        g_screens[i].seat = g_seatCount++;
+    } else {
+        g_screens[i].seat = NOT_USED; /* all 10 workplaces are taken */
+    }
+}
+
+/* Enforce "one screen per workplace": a screen that shares a workplace with
+ * an earlier screen (for example one just plugged in) gets its own. */
+static int separate_shared_screens(void)
+{
+    int moved = 0;
+    for (int i = 1; i < g_screenCount; i++) {
+        if (g_screens[i].seat == NOT_USED) continue;
+        for (int j = 0; j < i; j++) {
+            if (g_screens[j].seat != g_screens[i].seat) continue;
+            give_new_screen_a_workplace(i);
+            moved++;
+            break;
+        }
+    }
+    return moved;
 }
 
 static void remove_last_seat(void)
@@ -808,8 +866,13 @@ static void refresh_hardware(BOOL automatic)
     }
     free(oldScreens);
     free(oldDevices);
+    int separated = separate_shared_screens();
+    if (separated) g_dirty = TRUE;
     layout();
-    if (automatic && g_idleCount > 0 && !moreScreens)
+    update_buttons();
+    if (separated)
+        _snwprintf(g_status, 300, L"New screen connected and given its own workplace. Press Save setup to keep it.");
+    else if (automatic && g_idleCount > 0 && !moreScreens)
         _snwprintf(g_status, 300, L"A screen was connected. Press Turn on in the screen list.");
     else if (automatic && moreScreens)
         _snwprintf(g_status, 300, L"New screen connected. Click it above to give it to a workplace.");
@@ -861,6 +924,16 @@ static LRESULT CALLBACK wnd_proc(HWND wnd, UINT msg, WPARAM wp, LPARAM lp)
         g_btnSharing = make_button(L"Connections and sharing", ID_SHARING, FALSE);
         find_hardware();
         load_setup();
+        {
+            WCHAR path[MAX_PATH];
+            setup_file(g_demo ? L"demo-setup.ini" : L"setup.ini", path, MAX_PATH);
+            int changes = GetFileAttributesW(path) == INVALID_FILE_ATTRIBUTES ? one_workplace_per_screen()
+                                                                              : separate_shared_screens();
+            if (changes) {
+                g_dirty = TRUE;
+                _snwprintf(g_status, 300, L"Each screen has its own workplace. Press Save setup to keep this.");
+            }
+        }
         update_buttons();
         return 0;
     }
@@ -917,7 +990,7 @@ static LRESULT CALLBACK wnd_proc(HWND wnd, UINT msg, WPARAM wp, LPARAM lp)
         int index, kind = hit_test(pt, &index);
         if (kind == HIT_IDLE) {
             if (extend_displays()) {
-                set_status(L"Turning the screen on\x2026 It appears above in a moment.");
+                set_status(L"Turning the screen on\x2026 It appears above with its own workplace.");
                 SetTimer(wnd, 3, 1500, NULL);
             } else {
                 set_status(L"Windows could not turn it on. Press the Windows key + P and choose Extend.");

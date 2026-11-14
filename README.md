@@ -181,8 +181,9 @@ no build step, so it can be put online with GitHub Pages (Settings, Pages,
    screen list with a button to choose its workplace. A screen that is
    connected but switched off, or only shows a copy of another screen, is
    listed with a **Turn on** button (the same as Win+P, Extend).
-2. Press **Add a workplace**, then use the button on a screen's row and choose
-   Workplace 2.
+2. Every screen gets a workplace of its own automatically: screen 1 is
+   Workplace 1, screen 2 is Workplace 2, and so on. A workplace never has two
+   screens; choosing a workplace that already has a screen swaps the two.
 3. Optionally click each keyboard and mouse and choose its workplace. If you
    skip this, VISION asks at start: press a key and click on each
    workplace's screen.
