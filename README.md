@@ -230,8 +230,10 @@ itself at every start. Changes saved in the setup window are used at once.
 People share one keyboard focus and one pointer, so they take turns; the first
 key press after switching can reach the previous window.
 
-On Windows Server, `VISION.exe --start` instead gives every workplace its own
-Windows sign-in (the mode described below).
+On Windows Server, **Start workplaces** (and the automatic start, via a
+scheduled task the setup creates) instead gives every workplace its own
+Windows sign-in on this PC, so each one works like a separate PC at the same
+time (the mode described below).
 
 ### How it works
 

@@ -389,6 +389,7 @@ int run_keep_apart(HINSTANCE inst, BOOL test, BOOL automatic)
 {
     g_test = test;
     g_auto = automatic;
+    if (automatic && !test && is_server_os()) return 0; /* Windows Server uses separate sign-ins instead */
     HANDLE single = CreateMutexW(NULL, TRUE, L"Local\\VISION.KeepApart");
     if (GetLastError() == ERROR_ALREADY_EXISTS) {
         /* It is already running and picks up saved changes by itself. */

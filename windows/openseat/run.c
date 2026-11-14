@@ -983,7 +983,7 @@ static BOOL check_setup(WCHAR *problem, size_t chars)
     return TRUE;
 }
 
-int run_controller(HINSTANCE inst, BOOL test)
+int run_controller(HINSTANCE inst, BOOL test, BOOL automatic)
 {
     WCHAR problem[512], programFiles[MAX_PATH];
     g_test = test;
@@ -1016,7 +1016,7 @@ int run_controller(HINSTANCE inst, BOOL test)
     find_hardware();
     if (test) add_saved_devices();
     load_setup();
-    if (!check_setup(problem, 512)) { say(problem, MB_ICONWARNING); return 1; }
+    if (!check_setup(problem, 512)) { if (!automatic) say(problem, MB_ICONWARNING); return 1; } /* started with Windows: stay quiet until set up */
 
     if (!test && !is_server_os() &&
         MessageBoxW(NULL,

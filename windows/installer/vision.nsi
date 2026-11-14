@@ -32,7 +32,7 @@ VIAddVersionKey "LegalCopyright" "MIT License"
 !define MUI_ABORTWARNING
 
 !define MUI_WELCOMEPAGE_TITLE "Welcome to VISION"
-!define MUI_WELCOMEPAGE_TEXT "VISION lets several people share this one PC. Each workplace gets its own screen, keyboard and mouse, and all of them use this PC's Windows.$\r$\n$\r$\nVISION keeps each workplace's windows and mouse on its own screen, and starts by itself every time Windows starts.$\r$\n$\r$\nClick Next to continue."
+!define MUI_WELCOMEPAGE_TEXT "VISION lets several people share this one PC. Each workplace gets its own screen, keyboard and mouse, and all of them use this PC's Windows.$\r$\n$\r$\nOn Windows Server every workplace works like a separate PC at the same time. On Windows 10 and 11 VISION keeps each workplace's windows and mouse on its own screen, and people take turns typing.$\r$\n$\r$\nClick Next to continue."
 !insertmacro MUI_PAGE_WELCOME
 !insertmacro MUI_PAGE_LICENSE "..\..\LICENSE"
 !insertmacro MUI_PAGE_DIRECTORY
@@ -81,6 +81,11 @@ Section "VISION" SecMain
   ; Start with Windows for every user: keeps the saved workplaces apart.
   ; It stays quiet until the workplaces have been set up once.
   WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Run" "VISION" '"$INSTDIR\VISION.exe" --keep-apart --auto'
+  ; Windows Server: give every workplace its own sign-in at each start. That
+  ; needs administrator rights, so it runs as a scheduled task at sign-in.
+  ReadRegStr $0 HKLM "SOFTWARE\Microsoft\Windows NT\CurrentVersion" "InstallationType"
+  StrCmp $0 "Client" +2 0
+    nsExec::Exec 'schtasks /Create /F /TN "VISION Workplaces" /SC ONLOGON /RL HIGHEST /TR "\"$INSTDIR\VISION.exe\" --start --auto"'
 
   WriteRegStr HKLM "${UNINST_KEY}" "DisplayName" "VISION"
   WriteRegStr HKLM "${UNINST_KEY}" "DisplayVersion" "${VERSION}"
@@ -112,6 +117,7 @@ Section "Uninstall"
   Delete "$DESKTOP\VISION.lnk"
   DeleteRegValue HKLM "Software\Microsoft\Windows\CurrentVersion\Run" "VISIONAgent"
   DeleteRegValue HKLM "Software\Microsoft\Windows\CurrentVersion\Run" "VISION"
+  nsExec::Exec 'schtasks /Delete /F /TN "VISION Workplaces"'
   DeleteRegKey HKLM "${UNINST_KEY}"
 
   ; The hidden accounts hold each workplace's files, so ask before removing them.

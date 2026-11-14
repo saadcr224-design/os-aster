@@ -19,7 +19,7 @@
 #include <stdlib.h>
 #include <wchar.h>
 
-int run_controller(HINSTANCE inst, BOOL test);
+int run_controller(HINSTANCE inst, BOOL test, BOOL automatic);
 int run_agent(HINSTANCE inst, BOOL test);
 int run_keep_apart(HINSTANCE inst, BOOL test, BOOL automatic);
 
@@ -526,7 +526,8 @@ static void paint(HDC dc)
     RECT noteText = { S(20), S(78), rc.right - S(20), S(110) };
     text(dc, g_fText, COL_NOTE_TX, noteText, DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS,
          g_demo ? L"Demo: these screens and devices are examples, not your real hardware."
-         : L"All workplaces use this PC's Windows. VISION keeps each workplace's windows and mouse on its own screen. It starts with Windows.");
+         : is_server_os() ? L"Windows Server: every workplace gets its own Windows sign-in on this PC, like a separate PC. It starts with Windows."
+                          : L"Windows 10/11: workplaces share one Windows sign-in; VISION keeps each one's windows and mouse on its own screen.");
 
     paint_screens(dc);
     paint_devices(dc);
@@ -831,11 +832,13 @@ static void start_workplaces(void)
     /* Windows Server: a real desktop per workplace.  Windows 10/11 have one
      * desktop for the whole PC, so VISION keeps each workplace's windows on its
      * own screen instead. */
-    /* All workplaces use this PC's one Windows; VISION keeps them apart.
-     * (Separate Windows sign-ins per workplace on Windows Server: VISION.exe --start) */
-    info.lpVerb = L"open";
+    /* Windows Server: every workplace signs in to this PC's Windows by itself,
+     * like a separate PC.  Windows 10/11 allow one sign-in at a time, so there
+     * all workplaces share it and VISION keeps them apart. */
+    BOOL server = is_server_os();
+    info.lpVerb = server ? L"runas" : L"open";
     info.lpFile = self;
-    info.lpParameters = L"--keep-apart";
+    info.lpParameters = server ? L"--start" : L"--keep-apart";
     info.nShow = SW_SHOWNORMAL;
     if (ShellExecuteExW(&info)) {
         set_status(L"The workplaces are running. Changes you save are used straight away.");
@@ -1108,7 +1111,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE prev, PWSTR cmd, int show)
     (void)prev;
     BOOL test = cmd && wcsstr(cmd, L"--test") != NULL;
     if (cmd && wcsstr(cmd, L"--agent")) return run_agent(inst, test);
-    if (cmd && wcsstr(cmd, L"--start")) return run_controller(inst, test);
+    if (cmd && wcsstr(cmd, L"--start")) return run_controller(inst, test, wcsstr(cmd, L"--auto") != NULL);
     if (cmd && wcsstr(cmd, L"--keep-apart")) return run_keep_apart(inst, test, wcsstr(cmd, L"--auto") != NULL);
     g_demo = cmd && wcsstr(cmd, L"--demo") != NULL;
 
