@@ -32,13 +32,13 @@ VIAddVersionKey "LegalCopyright" "MIT License"
 !define MUI_ABORTWARNING
 
 !define MUI_WELCOMEPAGE_TITLE "Welcome to VISION"
-!define MUI_WELCOMEPAGE_TEXT "VISION lets several people use this one PC at the same time. Each person gets their own screen, keyboard and mouse.$\r$\n$\r$\nRunning several people at once needs Windows Server 2016 or newer. On Windows 10 and 11 you can set everything up, but only one person can be signed in at a time.$\r$\n$\r$\nClick Next to continue."
+!define MUI_WELCOMEPAGE_TEXT "VISION lets several people share this one PC. Each workplace gets its own screen, keyboard and mouse, and all of them use this PC's Windows.$\r$\n$\r$\nVISION keeps each workplace's windows and mouse on its own screen, and starts by itself every time Windows starts.$\r$\n$\r$\nClick Next to continue."
 !insertmacro MUI_PAGE_WELCOME
 !insertmacro MUI_PAGE_LICENSE "..\..\LICENSE"
 !insertmacro MUI_PAGE_DIRECTORY
 !insertmacro MUI_PAGE_INSTFILES
 !define MUI_FINISHPAGE_TITLE "VISION is installed"
-!define MUI_FINISHPAGE_TEXT "Open VISION from the Start menu or the desktop icon.$\r$\n$\r$\nThe first Start asks to add a free input driver and to restart the PC once."
+!define MUI_FINISHPAGE_TEXT "VISION is set up to start with Windows.$\r$\n$\r$\nOpen VISION once to give each screen its keyboard and mouse, then press Save setup. From then on the workplaces are kept apart automatically."
 !define MUI_FINISHPAGE_RUN
 !define MUI_FINISHPAGE_RUN_TEXT "Open VISION now"
 !define MUI_FINISHPAGE_RUN_FUNCTION OpenVision
@@ -78,6 +78,10 @@ Section "VISION" SecMain
   CreateShortcut "$SMPROGRAMS\VISION\Uninstall VISION.lnk" "$INSTDIR\Uninstall.exe"
   CreateShortcut "$DESKTOP\VISION.lnk" "$INSTDIR\VISION.exe"
 
+  ; Start with Windows for every user: keeps the saved workplaces apart.
+  ; It stays quiet until the workplaces have been set up once.
+  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Run" "VISION" '"$INSTDIR\VISION.exe" --keep-apart --auto'
+
   WriteRegStr HKLM "${UNINST_KEY}" "DisplayName" "VISION"
   WriteRegStr HKLM "${UNINST_KEY}" "DisplayVersion" "${VERSION}"
   WriteRegStr HKLM "${UNINST_KEY}" "Publisher" "VISION"
@@ -107,6 +111,7 @@ Section "Uninstall"
   RMDir "$SMPROGRAMS\VISION"
   Delete "$DESKTOP\VISION.lnk"
   DeleteRegValue HKLM "Software\Microsoft\Windows\CurrentVersion\Run" "VISIONAgent"
+  DeleteRegValue HKLM "Software\Microsoft\Windows\CurrentVersion\Run" "VISION"
   DeleteRegKey HKLM "${UNINST_KEY}"
 
   ; The hidden accounts hold each workplace's files, so ask before removing them.

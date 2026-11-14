@@ -21,7 +21,7 @@
 
 int run_controller(HINSTANCE inst, BOOL test);
 int run_agent(HINSTANCE inst, BOOL test);
-int run_keep_apart(HINSTANCE inst, BOOL test);
+int run_keep_apart(HINSTANCE inst, BOOL test, BOOL automatic);
 
 enum { ID_ADD = 1, ID_REMOVE, ID_FIND, ID_REFRESH, ID_SAVE, ID_START, ID_SHARING, ID_MENU_SEAT = 1000, ID_MENU_NONE = 1099 };
 enum { HIT_NONE, HIT_SCREEN, HIT_DEVICE, HIT_SEAT, HIT_IDLE };
@@ -526,8 +526,7 @@ static void paint(HDC dc)
     RECT noteText = { S(20), S(78), rc.right - S(20), S(110) };
     text(dc, g_fText, COL_NOTE_TX, noteText, DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS,
          g_demo ? L"Demo: these screens and devices are examples, not your real hardware."
-         : is_server_os() ? L"Give each workplace a screen, then press Start workplaces. Each workplace works on its own, separate from the others."
-                          : L"Windows 10/11: each workplace's windows stay on its own screen; people take turns typing. A full desktop each needs Windows Server.");
+         : L"All workplaces use this PC's Windows. VISION keeps each workplace's windows and mouse on its own screen. It starts with Windows.");
 
     paint_screens(dc);
     paint_devices(dc);
@@ -832,13 +831,14 @@ static void start_workplaces(void)
     /* Windows Server: a real desktop per workplace.  Windows 10/11 have one
      * desktop for the whole PC, so VISION keeps each workplace's windows on its
      * own screen instead. */
-    BOOL server = is_server_os();
-    info.lpVerb = server ? L"runas" : L"open";
+    /* All workplaces use this PC's one Windows; VISION keeps them apart.
+     * (Separate Windows sign-ins per workplace on Windows Server: VISION.exe --start) */
+    info.lpVerb = L"open";
     info.lpFile = self;
-    info.lpParameters = server ? L"--start" : L"--keep-apart";
+    info.lpParameters = L"--keep-apart";
     info.nShow = SW_SHOWNORMAL;
     if (ShellExecuteExW(&info)) {
-        set_status(L"Starting the workplaces\x2026 Follow the instructions on each screen.");
+        set_status(L"The workplaces are running. Changes you save are used straight away.");
     } else {
         set_status(GetLastError() == ERROR_CANCELLED ? L"Start was cancelled: VISION needs administrator permission."
                                                      : L"Could not start the workplaces.");
@@ -1109,7 +1109,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE prev, PWSTR cmd, int show)
     BOOL test = cmd && wcsstr(cmd, L"--test") != NULL;
     if (cmd && wcsstr(cmd, L"--agent")) return run_agent(inst, test);
     if (cmd && wcsstr(cmd, L"--start")) return run_controller(inst, test);
-    if (cmd && wcsstr(cmd, L"--keep-apart")) return run_keep_apart(inst, test);
+    if (cmd && wcsstr(cmd, L"--keep-apart")) return run_keep_apart(inst, test, wcsstr(cmd, L"--auto") != NULL);
     g_demo = cmd && wcsstr(cmd, L"--demo") != NULL;
 
     INITCOMMONCONTROLSEX icc = { sizeof(icc), ICC_STANDARD_CLASSES };

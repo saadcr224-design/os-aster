@@ -213,11 +213,12 @@ Anything not ticked stays private. Changes apply the next time the workplaces
 start. Note: other drives (such as `D:`) follow normal Windows permissions, so
 keep private files inside your own user folder.
 
-### On Windows 10 and 11
+### Shared-Windows mode (the default)
 
-Windows 10 and 11 run one desktop for the whole PC. There, **Start
-workplaces** keeps the workplaces apart inside that desktop (no
-administrator rights or driver needed):
+All workplaces use this PC's one Windows, and VISION keeps them apart. The
+installer sets VISION to start with Windows, so after the workplaces are set
+up once (screen, keyboard and mouse for each, then **Save setup**) this runs by
+itself at every start. Changes saved in the setup window are used at once.
 
 - a program window belongs to the workplace whose keyboard or mouse was used
   last when it opened, and appears on that workplace's screen;
@@ -226,9 +227,11 @@ administrator rights or driver needed):
 - typing on a workplace's keyboard brings that workplace's window to the front;
 - each screen's taskbar shows only its own windows.
 
-People still share one keyboard focus and one pointer, so they take turns;
-the first key press after switching can reach the previous window. A full
-desktop for each person at the same time needs Windows Server.
+People share one keyboard focus and one pointer, so they take turns; the first
+key press after switching can reach the previous window.
+
+On Windows Server, `VISION.exe --start` instead gives every workplace its own
+Windows sign-in (the mode described below).
 
 ### How it works
 

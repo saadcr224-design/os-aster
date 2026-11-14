@@ -38,6 +38,8 @@ static int g_dpi = 96;
 static DWORD g_prevTaskbar, g_prevTaskbarMode;
 static BOOL g_hadTaskbar, g_hadTaskbarMode, g_test;
 static WCHAR g_note[200];
+static FILETIME g_setupTime;
+static BOOL g_auto;
 
 static int S(int v) { return MulDiv(v, g_dpi, 96); }
 
@@ -251,6 +253,35 @@ static void set_taskbars(BOOL apart)
     SendMessageTimeoutW(HWND_BROADCAST, WM_SETTINGCHANGE, 0, (LPARAM)L"TraySettings", SMTO_ABORTIFHUNG, 1000, &unused);
 }
 
+/* ---- follow changes made in the setup window ---------------------------- */
+
+static FILETIME setup_time(void)
+{
+    WCHAR path[MAX_PATH];
+    WIN32_FILE_ATTRIBUTE_DATA d;
+    FILETIME none = { 0, 0 };
+    setup_file(L"setup.ini", path, MAX_PATH);
+    return GetFileAttributesExW(path, GetFileExInfoStandard, &d) ? d.ftLastWriteTime : none;
+}
+
+/* Saved in the setup window, or screens changed: use the new layout at once.
+ * Windows keep their workplace. */
+static void reload_setup(void)
+{
+    g_setupTime = setup_time();
+    find_hardware();
+    load_setup();
+    if (g_active >= g_seatCount) g_active = 0;
+    if (g_pointerSeat >= g_seatCount || (g_pointerSeat >= 0 && seat_first_screen(g_pointerSeat) < 0)) {
+        g_pointerSeat = -1;
+        ClipCursor(NULL);
+    }
+    for (int i = 0; i < g_winCount; i++)
+        if (IsWindow(g_win[i].wnd) && g_win[i].seat >= 0 && g_win[i].seat < g_seatCount) place(g_win[i].wnd, g_win[i].seat);
+    lstrcpynW(g_note, L"The new setup is in use.", 200);
+    InvalidateRect(g_status, NULL, FALSE);
+}
+
 /* ---- status window ----------------------------------------------------------- */
 
 static void stop_keeping_apart(void)
@@ -328,9 +359,13 @@ static LRESULT CALLBACK status_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
         if (wp == HOTKEY_STOP) DestroyWindow(w);
         return 0;
     case WM_DISPLAYCHANGE:
-        find_hardware(); /* screens moved: keep the seats, update their positions */
-        load_setup();
+        reload_setup(); /* screens moved: keep the seats, update their positions */
         return 0;
+    case WM_TIMER: {
+        FILETIME now = setup_time();
+        if (CompareFileTime(&now, &g_setupTime) != 0) reload_setup();
+        return 0;
+    }
     case WM_DESTROY:
         stop_keeping_apart();
         PostQuitMessage(0);
@@ -350,12 +385,15 @@ static HFONT font(int points, int weight)
     return CreateFontIndirectW(&lf);
 }
 
-int run_keep_apart(HINSTANCE inst, BOOL test)
+int run_keep_apart(HINSTANCE inst, BOOL test, BOOL automatic)
 {
     g_test = test;
+    g_auto = automatic;
     HANDLE single = CreateMutexW(NULL, TRUE, L"Local\\VISION.KeepApart");
     if (GetLastError() == ERROR_ALREADY_EXISTS) {
-        MessageBoxW(NULL, L"VISION is already keeping the workplaces apart.", L"VISION", MB_OK | MB_ICONINFORMATION);
+        /* It is already running and picks up saved changes by itself. */
+        HWND w = FindWindowW(L"VISIONKeepApart", NULL);
+        if (w && !automatic) { ShowWindow(w, SW_RESTORE); SetForegroundWindow(w); }
         return 0;
     }
     HDC screen = GetDC(NULL);
@@ -369,7 +407,7 @@ int run_keep_apart(HINSTANCE inst, BOOL test)
     int withScreen = 0;
     for (int s = 0; s < g_seatCount; s++) withScreen += seat_first_screen(s) >= 0;
     if (withScreen < 2) {
-        MessageBoxW(NULL, L"Give at least two workplaces a screen first.", L"VISION", MB_OK | MB_ICONWARNING);
+        if (!automatic) MessageBoxW(NULL, L"Give at least two workplaces a screen first.", L"VISION", MB_OK | MB_ICONWARNING);
         return 1;
     }
     for (int s = 1; s < g_seatCount; s++) {
@@ -378,7 +416,7 @@ int run_keep_apart(HINSTANCE inst, BOOL test)
             WCHAR msg[200];
             _snwprintf(msg, 200, L"Workplace %d needs its own keyboard and mouse. Choose them in the list of keyboards and mice, "
                                  L"or use \"Find a device\" to see which is which.", s + 1);
-            MessageBoxW(NULL, msg, L"VISION", MB_OK | MB_ICONWARNING);
+            if (!automatic) MessageBoxW(NULL, msg, L"VISION", MB_OK | MB_ICONWARNING);
             return 1;
         }
     }
@@ -422,7 +460,10 @@ int run_keep_apart(HINSTANCE inst, BOOL test)
             track(w2, seat >= 0 ? seat : 0);
         }
 
-    ShowWindow(g_status, SW_SHOWNORMAL);
+    g_setupTime = setup_time();
+    SetTimer(g_status, 1, 2000, NULL);
+    /* Started with Windows: stay out of the way, as a button on the taskbar. */
+    ShowWindow(g_status, automatic ? SW_SHOWMINNOACTIVE : SW_SHOWNORMAL);
     MSG msg;
     while (GetMessageW(&msg, NULL, 0, 0) > 0) {
         TranslateMessage(&msg);
