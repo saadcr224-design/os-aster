@@ -21,6 +21,7 @@
 
 int run_controller(HINSTANCE inst, BOOL test);
 int run_agent(HINSTANCE inst, BOOL test);
+int run_keep_apart(HINSTANCE inst, BOOL test);
 
 enum { ID_ADD = 1, ID_REMOVE, ID_FIND, ID_REFRESH, ID_SAVE, ID_START, ID_SHARING, ID_MENU_SEAT = 1000, ID_MENU_NONE = 1099 };
 enum { HIT_NONE, HIT_SCREEN, HIT_DEVICE, HIT_SEAT, HIT_IDLE };
@@ -526,7 +527,7 @@ static void paint(HDC dc)
     text(dc, g_fText, COL_NOTE_TX, noteText, DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS,
          g_demo ? L"Demo: these screens and devices are examples, not your real hardware."
          : is_server_os() ? L"Give each workplace a screen, then press Start workplaces. Each workplace works on its own, separate from the others."
-                          : L"Note: Windows 10 and 11 allow only one person signed in at a time. Several people at once needs Windows Server.");
+                          : L"Windows 10/11: each workplace's windows stay on its own screen; people take turns typing. A full desktop each needs Windows Server.");
 
     paint_screens(dc);
     paint_devices(dc);
@@ -828,9 +829,13 @@ static void start_workplaces(void)
     ZeroMemory(&info, sizeof(info));
     info.cbSize = sizeof(info);
     info.hwnd = g_wnd;
-    info.lpVerb = L"runas";
+    /* Windows Server: a real desktop per workplace.  Windows 10/11 have one
+     * desktop for the whole PC, so VISION keeps each workplace's windows on its
+     * own screen instead. */
+    BOOL server = is_server_os();
+    info.lpVerb = server ? L"runas" : L"open";
     info.lpFile = self;
-    info.lpParameters = L"--start";
+    info.lpParameters = server ? L"--start" : L"--keep-apart";
     info.nShow = SW_SHOWNORMAL;
     if (ShellExecuteExW(&info)) {
         set_status(L"Starting the workplaces\x2026 Follow the instructions on each screen.");
@@ -1104,6 +1109,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE prev, PWSTR cmd, int show)
     BOOL test = cmd && wcsstr(cmd, L"--test") != NULL;
     if (cmd && wcsstr(cmd, L"--agent")) return run_agent(inst, test);
     if (cmd && wcsstr(cmd, L"--start")) return run_controller(inst, test);
+    if (cmd && wcsstr(cmd, L"--keep-apart")) return run_keep_apart(inst, test);
     g_demo = cmd && wcsstr(cmd, L"--demo") != NULL;
 
     INITCOMMONCONTROLSEX icc = { sizeof(icc), ICC_STANDARD_CLASSES };

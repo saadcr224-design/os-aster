@@ -213,6 +213,23 @@ Anything not ticked stays private. Changes apply the next time the workplaces
 start. Note: other drives (such as `D:`) follow normal Windows permissions, so
 keep private files inside your own user folder.
 
+### On Windows 10 and 11
+
+Windows 10 and 11 run one desktop for the whole PC. There, **Start
+workplaces** keeps the workplaces apart inside that desktop (no
+administrator rights or driver needed):
+
+- a program window belongs to the workplace whose keyboard or mouse was used
+  last when it opened, and appears on that workplace's screen;
+- a window dragged onto another workplace's screen is moved back;
+- the pointer stays on the screen of the workplace whose mouse moved last;
+- typing on a workplace's keyboard brings that workplace's window to the front;
+- each screen's taskbar shows only its own windows.
+
+People still share one keyboard focus and one pointer, so they take turns;
+the first key press after switching can reach the previous window. A full
+desktop for each person at the same time needs Windows Server.
+
 ### How it works
 
 - Each extra workplace is a Remote Desktop session on this same PC, shown full
