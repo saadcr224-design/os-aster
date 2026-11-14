@@ -23,7 +23,7 @@ int run_controller(HINSTANCE inst, BOOL test, BOOL automatic);
 int run_agent(HINSTANCE inst, BOOL test);
 int run_keep_apart(HINSTANCE inst, BOOL test, BOOL automatic);
 
-enum { ID_ADD = 1, ID_REMOVE, ID_FIND, ID_REFRESH, ID_SAVE, ID_START, ID_SHARING, ID_MENU_SEAT = 1000, ID_MENU_NONE = 1099 };
+enum { ID_ADD = 101, ID_REMOVE, /* not 1 or 2: Enter and Esc send IDOK (1) and IDCANCEL (2) */ ID_FIND, ID_REFRESH, ID_SAVE, ID_START, ID_SHARING, ID_AUTO, ID_MENU_SEAT = 1000, ID_MENU_NONE = 1099 };
 enum { HIT_NONE, HIT_SCREEN, HIT_DEVICE, HIT_SEAT, HIT_IDLE };
 
 static const COLORREF SEAT_COLORS[MAX_SEATS] = {
@@ -44,7 +44,14 @@ static const COLORREF SEAT_COLORS[MAX_SEATS] = {
 
 static BOOL g_dirty, g_finding;
 static int g_dpi = 96;
-static HWND g_wnd, g_btnAdd, g_btnRemove, g_btnFind, g_btnRefresh, g_btnSave, g_btnStart, g_btnSharing;
+static HWND g_wnd, g_btnAdd, g_btnRemove, g_btnFind, g_btnRefresh, g_btnSave, g_btnStart, g_btnSharing, g_btnAuto;
+/* Automatic setup: which workplace is being asked for which device. */
+static int g_wizSeat = -1, g_wizKind;
+static HWND g_wizPrompt;
+static BOOL g_wizTaken[MAX_DEVICES];
+static DWORD g_wizEscAt; /* when Esc last skipped a step, so one press is not counted twice */
+static void wizard_input(const RAWINPUT *in);
+static void wizard_skip(void);
 static HFONT g_fTitle, g_fHead, g_fText, g_fBold, g_fSmall, g_fHuge;
 static WCHAR g_status[300] = L"";
 static int g_hoverKind, g_hoverIndex, g_menuKind, g_menuIndex, g_scroll, g_screenScroll;
@@ -133,6 +140,7 @@ static void layout(void)
     SetRect(&g_rcSeats, rc.right - margin - sideW, top, rc.right - margin, bottom);
 
     int by = rc.bottom - barH + S(14), bh = S(32);
+    MoveWindow(g_btnAuto, rc.right - margin - S(200), S(20), S(200), S(38), TRUE);
     MoveWindow(g_btnFind, margin, by, S(130), bh, TRUE);
     MoveWindow(g_btnRefresh, margin + S(140), by, S(90), bh, TRUE);
     MoveWindow(g_btnSharing, margin + S(240), by, S(190), bh, TRUE);
@@ -686,7 +694,8 @@ static void on_raw_input(HRAWINPUT raw)
 {
     RAWINPUT input;
     UINT size = sizeof(input);
-    if (!g_finding || GetRawInputData(raw, RID_INPUT, &input, &size, sizeof(RAWINPUTHEADER)) == (UINT)-1) return;
+    if ((!g_finding && g_wizSeat < 0) || GetRawInputData(raw, RID_INPUT, &input, &size, sizeof(RAWINPUTHEADER)) == (UINT)-1) return;
+    if (g_wizSeat >= 0) { wizard_input(&input); return; }
     if (!input.header.hDevice) return;
     for (int i = 0; i < g_deviceCount; i++) {
         Device *d = &g_devices[i];
@@ -711,6 +720,152 @@ static void on_raw_input(HRAWINPUT raw)
             return;
         }
     }
+}
+
+/* ---- automatic setup ------------------------------------------------------ */
+
+static LRESULT CALLBACK wizard_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
+{
+    if (msg == WM_PAINT) {
+        PAINTSTRUCT ps;
+        RECT rc;
+        HDC dc = BeginPaint(w, &ps);
+        GetClientRect(w, &rc);
+        HBRUSH bg = CreateSolidBrush(RGB(16, 24, 48));
+        FillRect(dc, &rc, bg);
+        DeleteObject(bg);
+        SetBkMode(dc, TRANSPARENT);
+        static HICON logo;
+        if (!logo) logo = LoadImageW(GetModuleHandleW(NULL), MAKEINTRESOURCEW(1), IMAGE_ICON, S(96), S(96), 0);
+        int mid = rc.bottom / 2;
+        if (logo) DrawIconEx(dc, (rc.right - S(96)) / 2, mid - S(200), logo, S(96), S(96), 0, NULL, DI_NORMAL);
+        WCHAR title[40];
+        _snwprintf(title, 40, L"Workplace %d", g_wizSeat + 1);
+        RECT a = { 0, mid - S(96), rc.right, mid - S(20) };
+        RECT b = { S(20), mid, rc.right - S(20), mid + S(50) };
+        RECT c = { S(20), mid + S(60), rc.right - S(20), mid + S(100) };
+        SelectObject(dc, g_fHuge);
+        SetTextColor(dc, SEAT_COLORS[g_wizSeat] == SEAT_COLORS[0] ? RGB(120, 165, 255) : tint(SEAT_COLORS[g_wizSeat], 35));
+        DrawTextW(dc, title, -1, &a, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        SelectObject(dc, g_fHead);
+        SetTextColor(dc, RGB(255, 255, 255));
+        DrawTextW(dc, g_wizKind == DEV_KEYBOARD ? L"Press any key on the keyboard for this screen."
+                                                : L"Now click with the mouse for this screen.", -1, &b,
+                  DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        SelectObject(dc, g_fText);
+        SetTextColor(dc, RGB(170, 180, 205));
+        DrawTextW(dc, L"VISION automatic setup  \x00B7  Press Esc to skip this step.", -1, &c, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        EndPaint(w, &ps);
+        return 0;
+    }
+    if (msg == WM_MOUSEACTIVATE) return MA_NOACTIVATE;
+    if (msg == WM_KEYDOWN && wp == VK_ESCAPE) { wizard_skip(); return 0; }
+    return DefWindowProcW(w, msg, wp, lp);
+}
+
+static void wizard_watch(BOOL on)
+{
+    if (g_finding) return; /* "Find a device" already watches */
+    RAWINPUTDEVICE want[2] = {
+        { 1, 6, on ? RIDEV_INPUTSINK : RIDEV_REMOVE, on ? g_wnd : NULL },
+        { 1, 2, on ? RIDEV_INPUTSINK : RIDEV_REMOVE, on ? g_wnd : NULL },
+    };
+    RegisterRawInputDevices(want, 2, sizeof(want[0]));
+}
+
+static void start_workplaces(void);
+
+static void wizard_show(void)
+{
+    int scr = seat_first_screen(g_wizSeat);
+    RECT a = g_screens[scr].area;
+    if (!g_wizPrompt) {
+        WNDCLASSW cls;
+        ZeroMemory(&cls, sizeof(cls));
+        cls.lpfnWndProc = wizard_proc;
+        cls.hInstance = GetModuleHandleW(NULL);
+        cls.hCursor = LoadCursorW(NULL, IDC_ARROW);
+        cls.lpszClassName = L"VISIONAutoSetup";
+        RegisterClassW(&cls);
+        g_wizPrompt = CreateWindowExW(WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE, L"VISIONAutoSetup",
+                                      L"VISION automatic setup", WS_POPUP, 0, 0, 10, 10, NULL, NULL, cls.hInstance, NULL);
+    }
+    SetWindowPos(g_wizPrompt, HWND_TOPMOST, a.left, a.top, a.right - a.left, a.bottom - a.top, SWP_NOACTIVATE | SWP_SHOWWINDOW);
+    InvalidateRect(g_wizPrompt, NULL, TRUE);
+    _snwprintf(g_status, 300, L"Automatic setup: look at screen %d.", scr + 1);
+    InvalidateRect(g_wnd, NULL, FALSE);
+}
+
+/* Go to the next question: keyboard, then mouse, for every workplace with a screen. */
+static void wizard_next(void)
+{
+    if (g_wizKind == DEV_KEYBOARD) {
+        g_wizKind = DEV_MOUSE;
+    } else {
+        g_wizKind = DEV_KEYBOARD;
+        do g_wizSeat++; while (g_wizSeat < g_seatCount && seat_first_screen(g_wizSeat) < 0);
+    }
+    if (g_wizSeat < g_seatCount) { wizard_show(); return; }
+
+    g_wizSeat = -1;
+    wizard_watch(FALSE);
+    if (g_wizPrompt) ShowWindow(g_wizPrompt, SW_HIDE);
+    changed();
+    if (!save_all()) { set_status(L"Automatic setup finished, but the setup could not be saved."); return; }
+    start_workplaces();
+    lstrcpynW(g_status, L"Automatic setup finished and saved. The workplaces are starting.", 300);
+    InvalidateRect(g_wnd, NULL, FALSE);
+}
+
+/* Esc skips a step.  It can arrive as raw input and as a normal key press;
+ * count it once. */
+static void wizard_skip(void)
+{
+    DWORD now = GetTickCount();
+    if (g_wizSeat < 0 || now - g_wizEscAt < 400) return;
+    g_wizEscAt = now;
+    wizard_next();
+}
+
+static void wizard_input(const RAWINPUT *in)
+{
+    BOOL keyDown = in->header.dwType == RIM_TYPEKEYBOARD && !(in->data.keyboard.Flags & RI_KEY_BREAK);
+    BOOL click = in->header.dwType == RIM_TYPEMOUSE &&
+                 (in->data.mouse.usButtonFlags & (RI_MOUSE_LEFT_BUTTON_DOWN | RI_MOUSE_RIGHT_BUTTON_DOWN));
+    if (keyDown && (in->data.keyboard.VKey == VK_ESCAPE || in->data.keyboard.MakeCode == 0x01)) { wizard_skip(); return; }
+    if (!(g_wizKind == DEV_KEYBOARD ? keyDown : click)) return;
+    for (int i = 0; i < g_deviceCount; i++) {
+        Device *d = &g_devices[i];
+        for (int h = 0; h < d->handleCount; h++) {
+            if (d->handles[h] != in->header.hDevice) continue;
+            if (g_wizTaken[i] && d->seat != g_wizSeat) return; /* already given to another workplace in this run */
+            d->seat = g_wizSeat;
+            g_wizTaken[i] = TRUE;
+            wizard_next();
+            return;
+        }
+    }
+}
+
+static void wizard_start(void)
+{
+    if (g_demo) { set_status(L"Demo: automatic setup needs real screens, keyboards and mice."); return; }
+    if (g_wizSeat >= 0) return;
+    if (g_finding) set_finding(FALSE);
+    refresh_hardware(FALSE);
+    one_workplace_per_screen();
+    if (g_screenCount < 2) {
+        MessageBoxW(g_wnd, L"Connect at least two screens first. Each screen becomes one workplace.", L"VISION",
+                    MB_OK | MB_ICONINFORMATION);
+        return;
+    }
+    ZeroMemory(g_wizTaken, sizeof(g_wizTaken));
+    for (int i = 0; i < g_deviceCount; i++) g_devices[i].seat = 0; /* each device is asked for again */
+    wizard_watch(TRUE);
+    g_wizSeat = 0;
+    g_wizKind = DEV_KEYBOARD;
+    changed();
+    wizard_show();
 }
 
 static void demo_find_tick(void)
@@ -924,6 +1079,7 @@ static LRESULT CALLBACK wnd_proc(HWND wnd, UINT msg, WPARAM wp, LPARAM lp)
         g_fSmall = make_font(9, FW_NORMAL);
         g_fHuge = make_font(26, FW_BOLD);
         g_btnFind = make_button(L"Find a device", ID_FIND, FALSE);
+        g_btnAuto = make_button(L"\x2728  Automatic setup", ID_AUTO, FALSE);
         g_btnRefresh = make_button(L"Refresh", ID_REFRESH, FALSE);
         g_btnSave = make_button(L"Save setup", ID_SAVE, TRUE);
         g_btnAdd = make_button(L"Add a workplace", ID_ADD, FALSE);
@@ -1047,6 +1203,7 @@ static LRESULT CALLBACK wnd_proc(HWND wnd, UINT msg, WPARAM wp, LPARAM lp)
     }
     case WM_COMMAND: {
         int id = LOWORD(wp);
+        if (id == IDCANCEL && g_wizSeat >= 0) { wizard_skip(); return 0; } /* Esc during automatic setup */
         if (id >= ID_MENU_SEAT && id < ID_MENU_SEAT + MAX_SEATS) { assign(g_menuKind, g_menuIndex, id - ID_MENU_SEAT); return 0; }
         switch (id) {
         case ID_MENU_NONE:
@@ -1061,6 +1218,9 @@ static LRESULT CALLBACK wnd_proc(HWND wnd, UINT msg, WPARAM wp, LPARAM lp)
             return 0;
         case ID_REMOVE:
             remove_last_seat();
+            return 0;
+        case ID_AUTO:
+            wizard_start();
             return 0;
         case ID_FIND:
             if (g_demo) {

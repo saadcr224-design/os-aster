@@ -183,6 +183,11 @@ back up first. See `windows/server-usb/README.txt`.
 
 ### How to use it
 
+**Quickest way:** press **Automatic setup** (top right). VISION gives every
+screen its own workplace, then each screen in turn asks its person to press a
+key and click their mouse (Esc skips a step). VISION assigns them, saves and
+starts the workplaces. The steps below do the same by hand.
+
 1. Run `VISION.exe`. Every connected monitor, TV or laptop display appears
    under **Screens**, with its name and plug type (HDMI, VGA, ...). A screen
    plugged in later appears by itself. Each screen has its own row in the
