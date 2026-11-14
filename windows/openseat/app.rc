@@ -99,13 +99,14 @@ STYLE DS_MODALFRAME | DS_CENTER | DS_SHELLFONT | WS_POPUP | WS_CAPTION | WS_SYSM
 CAPTION "Saved setups"
 FONT 9, "Segoe UI", 400, 0, 1
 BEGIN
-    LTEXT "Every saved setup is kept separately. Choose one to see what it holds, then Open it to use it again.", -1, 10, 8, 450, 12
+    LTEXT "Every saved setup is kept separately. Choose one to see what it holds. Open and start uses it and starts its workplaces.", -1, 10, 8, 450, 12
     CONTROL "", IDC_SETUP_LIST, "SysListView32", LVS_REPORT | LVS_SINGLESEL | LVS_SHOWSELALWAYS | WS_BORDER | WS_TABSTOP, 10, 24, 250, 216
     LTEXT "No saved setups yet. Press Save setup in the main window.", IDC_SETUP_EMPTY, 20, 60, 230, 24
     EDITTEXT IDC_SETUP_DETAILS, 268, 24, 192, 216, ES_MULTILINE | ES_READONLY | ES_AUTOVSCROLL | WS_VSCROLL
-    DEFPUSHBUTTON "Open", IDC_SETUP_OPEN, 10, 248, 56, 14
-    PUSHBUTTON "Rename", IDC_SETUP_RENAME, 72, 248, 56, 14
-    PUSHBUTTON "Delete", IDC_SETUP_DELETE, 134, 248, 56, 14
+    DEFPUSHBUTTON "Open and start", IDC_SETUP_START, 10, 248, 70, 14
+    PUSHBUTTON "Open", IDC_SETUP_OPEN, 86, 248, 50, 14
+    PUSHBUTTON "Rename", IDC_SETUP_RENAME, 142, 248, 50, 14
+    PUSHBUTTON "Delete", IDC_SETUP_DELETE, 198, 248, 50, 14
     PUSHBUTTON "Close", IDCANCEL, 404, 248, 56, 14
 END
 

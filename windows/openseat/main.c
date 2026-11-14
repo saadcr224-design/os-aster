@@ -1153,6 +1153,7 @@ static void save_named(void)
     InvalidateRect(g_wnd, NULL, FALSE);
 }
 
+static void start_workplaces(void);
 static Snapshot *g_snaps;
 static int g_snapCount;
 
@@ -1179,7 +1180,8 @@ static void fill_setup_list(HWND dlg, int selectId)
         if (g_snaps[i].id == selectId) select = i;
     }
     ShowWindow(GetDlgItem(dlg, IDC_SETUP_EMPTY), g_snapCount ? SW_HIDE : SW_SHOW);
-    for (int b = IDC_SETUP_OPEN; b <= IDC_SETUP_DELETE; b++) EnableWindow(GetDlgItem(dlg, b), g_snapCount > 0);
+    for (int b = IDC_SETUP_OPEN; b <= IDC_SETUP_START; b++)
+        if (b != IDC_SETUP_EMPTY) EnableWindow(GetDlgItem(dlg, b), g_snapCount > 0);
     SetDlgItemTextW(dlg, IDC_SETUP_DETAILS, L"");
     if (g_snapCount) ListView_SetItemState(list, select, LVIS_SELECTED | LVIS_FOCUSED, LVIS_SELECTED | LVIS_FOCUSED);
 }
@@ -1220,7 +1222,7 @@ static INT_PTR CALLBACK setups_proc(HWND dlg, UINT msg, WPARAM wp, LPARAM lp)
                 free(text);
             }
         } else if (n->idFrom == IDC_SETUP_LIST && n->code == NM_DBLCLK) {
-            PostMessageW(dlg, WM_COMMAND, IDC_SETUP_OPEN, 0);
+            PostMessageW(dlg, WM_COMMAND, IDC_SETUP_START, 0); /* double-click: open and start */
         }
         return FALSE;
     }
@@ -1231,11 +1233,12 @@ static INT_PTR CALLBACK setups_proc(HWND dlg, UINT msg, WPARAM wp, LPARAM lp)
         EndDialog(dlg, 0);
         return TRUE;
     case IDC_SETUP_OPEN:
+    case IDC_SETUP_START:
         if (!id) return TRUE;
         if (g_dirty && MessageBoxW(dlg, L"The changes you have not saved will be replaced by this setup. Open it anyway?",
                                    L"VISION", MB_YESNO | MB_ICONQUESTION) != IDYES)
             return TRUE;
-        EndDialog(dlg, id);
+        EndDialog(dlg, LOWORD(wp) == IDC_SETUP_START ? id | 0x100000 : id); /* flag: start it as well */
         return TRUE;
     case IDC_SETUP_RENAME:
         if (!id) return TRUE;
@@ -1265,6 +1268,8 @@ static void show_saved_setups(void)
     if (!all) return;
     g_snaps = all;
     int id = (int)DialogBoxParamW(GetModuleHandleW(NULL), MAKEINTRESOURCEW(IDD_SETUPS), g_wnd, setups_proc, 0);
+    BOOL andStart = id > 0 && (id & 0x100000);
+    id &= 0xFFFFF;
     WCHAR name[80] = L"";
     for (int i = 0; i < g_snapCount; i++) if (g_snaps[i].id == id) lstrcpynW(name, g_snaps[i].name, 80);
     g_snaps = NULL;
@@ -1279,6 +1284,7 @@ static void show_saved_setups(void)
     _snwprintf(g_status, 300, L"Opened \"%ls\" (ID %d) exactly as it was saved.", name, id);
     g_status[299] = 0;
     InvalidateRect(g_wnd, NULL, FALSE);
+    if (andStart) start_workplaces(); /* start its workplaces straight away, with its saved settings */
 }
 
 static void start_workplaces(void)

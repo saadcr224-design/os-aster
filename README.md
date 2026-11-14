@@ -231,7 +231,9 @@ is done. Each saved setup is its own file in
 `%APPDATA%\VISION\Saved setups`; a new save never changes an older one.
 
 **Saved setups** (above the workplace cards) lists them with their details and
-everything each one holds. **Open** brings a setup back exactly as it was saved;
+everything each one holds. **Open and start** (or a double-click) brings a
+setup back exactly as it was saved and starts its workplaces straight away.
+**Open** brings it back without starting;
 **Rename** and **Delete** work on the selected one. Saved setups stay after
 VISION or the PC restarts.
 
