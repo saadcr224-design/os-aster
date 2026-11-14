@@ -63,6 +63,35 @@ enum {
     SHARE_DEFAULT = SHARE_ON | SHARE_SOUND
 };
 extern int g_share[MAX_SEATS];
+#define NAME_CHARS 40
+extern WCHAR g_names[MAX_SEATS][NAME_CHARS]; /* name the person gave each workplace; empty = "Workplace N" */
+void seat_name(int seat, WCHAR *out, size_t chars);
+
+/* ---- saved setups: each one is its own file, never overwritten ---------- */
+#define MAX_SNAPSHOTS 200
+typedef struct {
+    int id;
+    WCHAR name[80];
+    WCHAR saved[40];   /* local date and time, e.g. 2026-11-14 15:03 */
+    int workplaces;
+    WCHAR path[MAX_PATH];
+} Snapshot;
+int list_snapshots(Snapshot *out, int max);  /* newest first */
+int save_snapshot(const WCHAR *name);        /* returns the new id, 0 on failure */
+BOOL open_snapshot(int id);                  /* makes it the current setup */
+BOOL rename_snapshot(int id, const WCHAR *name);
+BOOL delete_snapshot(int id);
+void describe_snapshot(int id, WCHAR *out, size_t chars);
+
+/* ---- starting single workplaces ----------------------------------------- */
+/* running.ini: which workplaces the person started (survives restarts).
+ * status.ini: what the running engine reports for each one. */
+enum { WS_NOT_STARTED, WS_STARTING, WS_RUNNING, WS_ERROR };
+BOOL want_running(int seat);
+void set_want_running(int seat, BOOL on);
+void report_status(int seat, int state, const WCHAR *detail);
+int read_status(int seat, WCHAR *detail, size_t chars);
+BOOL seat_problem(int seat, WCHAR *out, size_t chars); /* why it cannot start, if anything */
 void shared_folder(WCHAR *out, size_t chars);
 
 /* Screens that are plugged in but Windows is not using as their own desktop

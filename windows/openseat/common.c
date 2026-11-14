@@ -14,6 +14,7 @@ int g_screenCount, g_deviceCount, g_seatCount = 1;
 BOOL g_demo;
 WCHAR g_accounts[MAX_SEATS][ACCOUNT_CHARS];
 int g_share[MAX_SEATS];
+WCHAR g_names[MAX_SEATS][NAME_CHARS];
 static WCHAR g_gdiNames[MAX_SCREENS][CCHDEVICENAME];
 IdleScreen g_idle[MAX_IDLE];
 int g_idleCount;
@@ -77,6 +78,7 @@ void load_setup(void)
         /* The person never sees or types these: VISION makes them itself. */
         _snwprintf(g_accounts[s], ACCOUNT_CHARS, L"VISION%d", s + 1);
         g_share[s] = (int)GetPrivateProfileIntW(L"Sharing", name, SHARE_DEFAULT, path) & 15;
+        GetPrivateProfileStringW(L"Names", name, L"", g_names[s], NAME_CHARS, path);
     }
 }
 
@@ -87,9 +89,8 @@ BOOL save_setup(void)
     ini_path(path, MAX_PATH);
     _snwprintf(value, 16, L"%d", g_seatCount);
     ok &= WritePrivateProfileStringW(L"Setup", L"Workplaces", value, path);
-    ok &= WritePrivateProfileStringW(L"Screens", NULL, NULL, path);
-    ok &= WritePrivateProfileStringW(L"Devices", NULL, NULL, path);
-    ok &= WritePrivateProfileStringW(L"Hardware", NULL, NULL, path);
+    /* Screens and devices that are not plugged in right now keep their saved
+     * entries, so nothing is lost when a setup is saved without them. */
     for (int i = 0; i < g_screenCount && ok; i++) {
         ini_key(g_screens[i].key, key, 320);
         _snwprintf(value, 16, L"%d", g_screens[i].seat + 1); /* 0 = not used */
@@ -102,9 +103,11 @@ BOOL save_setup(void)
         if (g_devices[i].hwids[0])
             ok &= WritePrivateProfileStringW(L"Hardware", key, g_devices[i].hwids, path);
     }
-    for (int s = 1; s < MAX_SEATS && ok; s++) {
+    for (int s = 0; s < MAX_SEATS && ok; s++) {
         WCHAR name[24];
         _snwprintf(name, 24, L"Workplace%d", s + 1);
+        ok &= WritePrivateProfileStringW(L"Names", name, s < g_seatCount && g_names[s][0] ? g_names[s] : NULL, path);
+        if (s == 0) continue;
         _snwprintf(value, 16, L"%d", g_share[s]);
         ok &= WritePrivateProfileStringW(L"Sharing", name, value, path);
     }
@@ -518,6 +521,7 @@ void find_hardware(void)
         demo_hardware();
     } else if (test_screens()) {
         find_inputs();
+        add_saved_devices(); /* testing: devices listed in the file count as plugged in */
     } else {
         EnumDisplayMonitors(NULL, NULL, screen_proc, 0);
         name_screens((const WCHAR (*)[CCHDEVICENAME])g_gdiNames); /* before sorting: same order as g_gdiNames */
@@ -663,4 +667,217 @@ int event_to_inputs(const SeatEvent *e, INPUT out[4])
         n++;
     }
     return n;
+}
+
+/* ---- workplace names ------------------------------------------------------ */
+
+void seat_name(int seat, WCHAR *out, size_t chars)
+{
+    if (seat < 0) lstrcpynW(out, L"Not used", (int)chars);
+    else if (seat < MAX_SEATS && g_names[seat][0]) lstrcpynW(out, g_names[seat], (int)chars);
+    else _snwprintf(out, chars, L"Workplace %d", seat + 1);
+    out[chars - 1] = 0;
+}
+
+/* ---- saved setups --------------------------------------------------------- */
+
+static void snapshot_dir(WCHAR *out, size_t chars)
+{
+    setup_file(L"Saved setups", out, chars);
+    CreateDirectoryW(out, NULL);
+}
+
+static void snapshot_path(int id, WCHAR *out, size_t chars)
+{
+    WCHAR dir[MAX_PATH];
+    snapshot_dir(dir, MAX_PATH);
+    _snwprintf(out, chars, L"%ls\\setup-%04d.ini", dir, id);
+    out[chars - 1] = 0;
+}
+
+static int by_newest(const void *a, const void *b) { return ((const Snapshot *)b)->id - ((const Snapshot *)a)->id; }
+
+int list_snapshots(Snapshot *out, int max)
+{
+    WCHAR dir[MAX_PATH], pattern[MAX_PATH];
+    WIN32_FIND_DATAW fd;
+    int n = 0;
+    snapshot_dir(dir, MAX_PATH);
+    _snwprintf(pattern, MAX_PATH, L"%ls\\setup-*.ini", dir);
+    HANDLE h = FindFirstFileW(pattern, &fd);
+    if (h == INVALID_HANDLE_VALUE) return 0;
+    do {
+        int id = _wtoi(fd.cFileName + 6);
+        if (id <= 0 || n >= max) continue;
+        Snapshot *sn = &out[n++];
+        ZeroMemory(sn, sizeof(*sn));
+        sn->id = id;
+        _snwprintf(sn->path, MAX_PATH, L"%ls\\%ls", dir, fd.cFileName);
+        GetPrivateProfileStringW(L"Snapshot", L"Name", L"(no name)", sn->name, 80, sn->path);
+        GetPrivateProfileStringW(L"Snapshot", L"Saved", L"", sn->saved, 40, sn->path);
+        sn->workplaces = (int)GetPrivateProfileIntW(L"Setup", L"Workplaces", 1, sn->path);
+    } while (FindNextFileW(h, &fd));
+    FindClose(h);
+    qsort(out, (size_t)n, sizeof(Snapshot), by_newest);
+    return n;
+}
+
+int save_snapshot(const WCHAR *name)
+{
+    WCHAR current[MAX_PATH], target[MAX_PATH], value[40], idText[16];
+    Snapshot *all = calloc(MAX_SNAPSHOTS, sizeof(Snapshot));
+    int next = 1, n = all ? list_snapshots(all, MAX_SNAPSHOTS) : 0;
+    for (int i = 0; i < n; i++) if (all[i].id >= next) next = all[i].id + 1;
+    free(all);
+    setup_file(g_demo ? L"demo-setup.ini" : L"setup.ini", current, MAX_PATH);
+    snapshot_path(next, target, MAX_PATH);
+    /* A new file every time (CopyFile with "fail if it exists"), so a save can
+     * never overwrite an older setup. */
+    if (!CopyFileW(current, target, TRUE)) return 0;
+    SYSTEMTIME t;
+    GetLocalTime(&t);
+    _snwprintf(value, 40, L"%04u-%02u-%02u %02u:%02u:%02u", t.wYear, t.wMonth, t.wDay, t.wHour, t.wMinute, t.wSecond);
+    _snwprintf(idText, 16, L"%d", next);
+    WritePrivateProfileStringW(L"Snapshot", L"Id", idText, target);
+    WritePrivateProfileStringW(L"Snapshot", L"Name", name, target);
+    WritePrivateProfileStringW(L"Snapshot", L"Saved", value, target);
+    WritePrivateProfileStringW(L"Learned", NULL, NULL, target); /* port memory belongs to this PC, not to a setup */
+    return next;
+}
+
+BOOL open_snapshot(int id)
+{
+    WCHAR from[MAX_PATH], current[MAX_PATH];
+    snapshot_path(id, from, MAX_PATH);
+    if (GetFileAttributesW(from) == INVALID_FILE_ATTRIBUTES) return FALSE;
+    setup_file(g_demo ? L"demo-setup.ini" : L"setup.ini", current, MAX_PATH);
+    if (!CopyFileW(from, current, FALSE)) return FALSE;
+    WritePrivateProfileStringW(L"Snapshot", NULL, NULL, current);
+    load_setup();
+    return TRUE;
+}
+
+BOOL rename_snapshot(int id, const WCHAR *name)
+{
+    WCHAR path[MAX_PATH];
+    snapshot_path(id, path, MAX_PATH);
+    if (GetFileAttributesW(path) == INVALID_FILE_ATTRIBUTES) return FALSE;
+    return WritePrivateProfileStringW(L"Snapshot", L"Name", name, path);
+}
+
+BOOL delete_snapshot(int id)
+{
+    WCHAR path[MAX_PATH];
+    snapshot_path(id, path, MAX_PATH);
+    return DeleteFileW(path);
+}
+
+static void append(WCHAR *out, size_t chars, const WCHAR *fmt, ...)
+{
+    size_t used = wcslen(out);
+    if (used + 1 >= chars) return;
+    va_list ap;
+    va_start(ap, fmt);
+    _vsnwprintf(out + used, chars - used, fmt, ap);
+    va_end(ap);
+    out[chars - 1] = 0;
+}
+
+/* Everything a saved setup holds, written out for people to read. */
+void describe_snapshot(int id, WCHAR *out, size_t chars)
+{
+    WCHAR path[MAX_PATH], name[80], saved[40], keys[8192], value[400];
+    snapshot_path(id, path, MAX_PATH);
+    out[0] = 0;
+    GetPrivateProfileStringW(L"Snapshot", L"Name", L"", name, 80, path);
+    GetPrivateProfileStringW(L"Snapshot", L"Saved", L"", saved, 40, path);
+    int seats = (int)GetPrivateProfileIntW(L"Setup", L"Workplaces", 1, path);
+    append(out, chars, L"Name: %ls\r\nID: %d\r\nSaved: %ls\r\nWorkplaces: %d\r\n", name, id, saved, seats);
+    for (int s = 0; s < seats; s++) {
+        WCHAR key[24], wname[NAME_CHARS];
+        _snwprintf(key, 24, L"Workplace%d", s + 1);
+        GetPrivateProfileStringW(L"Names", key, L"", wname, NAME_CHARS, path);
+        if (!wname[0]) _snwprintf(wname, NAME_CHARS, L"Workplace %d", s + 1);
+        append(out, chars, L"\r\n%ls\r\n", wname);
+        if (s > 0) {
+            int f = (int)GetPrivateProfileIntW(L"Sharing", key, SHARE_DEFAULT, path);
+            append(out, chars, L"  Switched on: %ls; copy and paste: %ls; shared folder: %ls; sound: %ls\r\n",
+                   (f & SHARE_ON) ? L"yes" : L"no", (f & SHARE_CLIPBOARD) ? L"yes" : L"no",
+                   (f & SHARE_FOLDER) ? L"yes" : L"no", (f & SHARE_SOUND) ? L"yes" : L"no");
+        }
+        const WCHAR *sections[2] = { L"Screens", L"Devices" };
+        for (int k = 0; k < 2; k++) {
+            DWORD n = GetPrivateProfileStringW(sections[k], NULL, L"", keys, 8192, path);
+            for (WCHAR *e = keys; n && *e; e += wcslen(e) + 1) {
+                if ((int)GetPrivateProfileIntW(sections[k], e, 1, path) - 1 != s) continue;
+                const WCHAR *label = e + 1;
+                for (int i = 0; k == 0 && i < g_screenCount; i++) /* friendly names for hardware that is here */
+                    if (lstrcmpiW(g_screens[i].key, e + 1) == 0) {
+                        _snwprintf(value, 400, L"%ls %ls", g_screens[i].name, g_screens[i].connector);
+                        label = value;
+                    }
+                for (int i = 0; k == 1 && i < g_deviceCount; i++)
+                    if (lstrcmpiW(g_devices[i].key, e + 1) == 0) label = g_devices[i].name;
+                append(out, chars, L"  %ls: %ls\r\n", k == 0 ? L"Screen" : L"Device", label);
+            }
+        }
+    }
+}
+
+/* ---- starting single workplaces ---------------------------------------- */
+
+static void state_file(const WCHAR *name, WCHAR *out) { setup_file(name, out, MAX_PATH); }
+
+BOOL want_running(int seat)
+{
+    WCHAR path[MAX_PATH], key[24];
+    state_file(L"running.ini", path);
+    _snwprintf(key, 24, L"Workplace%d", seat + 1);
+    return GetPrivateProfileIntW(L"Running", key, 0, path) != 0;
+}
+
+void set_want_running(int seat, BOOL on)
+{
+    WCHAR path[MAX_PATH], key[24];
+    state_file(L"running.ini", path);
+    _snwprintf(key, 24, L"Workplace%d", seat + 1);
+    WritePrivateProfileStringW(L"Running", key, on ? L"1" : NULL, path);
+}
+
+void report_status(int seat, int state, const WCHAR *detail)
+{
+    WCHAR path[MAX_PATH], key[24], value[260];
+    static const WCHAR *names[] = { L"NotStarted", L"Starting", L"Running", L"Error" };
+    state_file(L"status.ini", path);
+    _snwprintf(key, 24, L"Workplace%d", seat + 1);
+    _snwprintf(value, 260, L"%ls|%ls", names[state], detail ? detail : L"");
+    value[259] = 0;
+    WritePrivateProfileStringW(L"Status", key, value, path);
+}
+
+int read_status(int seat, WCHAR *detail, size_t chars)
+{
+    WCHAR path[MAX_PATH], key[24], value[260];
+    state_file(L"status.ini", path);
+    _snwprintf(key, 24, L"Workplace%d", seat + 1);
+    GetPrivateProfileStringW(L"Status", key, L"NotStarted|", value, 260, path);
+    WCHAR *bar = wcschr(value, L'|');
+    if (detail) lstrcpynW(detail, bar ? bar + 1 : L"", (int)chars);
+    if (bar) *bar = 0;
+    if (lstrcmpW(value, L"Running") == 0) return WS_RUNNING;
+    if (lstrcmpW(value, L"Error") == 0) return WS_ERROR;
+    if (lstrcmpW(value, L"Starting") == 0) return WS_STARTING;
+    return WS_NOT_STARTED;
+}
+
+BOOL seat_problem(int seat, WCHAR *out, size_t chars)
+{
+    out[0] = 0;
+    if (seat < 0 || seat >= g_seatCount) _snwprintf(out, chars, L"This workplace no longer exists.");
+    else if (seat_first_screen(seat) < 0) _snwprintf(out, chars, L"It has no screen. Give it one in the screen list.");
+    else if (seat > 0 && !(g_share[seat] & SHARE_ON)) _snwprintf(out, chars, L"It is switched off in its settings.");
+    else if (seat > 0 && (!seat_has(seat, DEV_KEYBOARD) || !seat_has(seat, DEV_MOUSE)))
+        _snwprintf(out, chars, L"It needs its own keyboard and mouse. Choose them in the list.");
+    out[chars - 1] = 0;
+    return out[0] != 0;
 }

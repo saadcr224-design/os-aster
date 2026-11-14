@@ -2,3 +2,21 @@
 #define IDC_SHARE_BASE 200 /* 200 + workplace index * 10 + column; +9 is the row label */
 #define IDC_SHARE_INFO 400
 #define IDC_SHARE_INTRO 401
+#define IDD_NAME 120
+#define IDC_NAME_PROMPT 121
+#define IDC_NAME_EDIT 122
+#define IDD_SETUPS 130
+#define IDC_SETUP_LIST 131
+#define IDC_SETUP_DETAILS 132
+#define IDC_SETUP_OPEN 133
+#define IDC_SETUP_RENAME 134
+#define IDC_SETUP_DELETE 135
+#define IDC_SETUP_EMPTY 136
+#define IDD_WORKPLACE 140
+#define IDC_WP_NAME 141
+#define IDC_WP_ON 142
+#define IDC_WP_CLIP 143
+#define IDC_WP_FOLDER 144
+#define IDC_WP_SOUND 145
+#define IDC_WP_INFO 146
+#define IDC_WP_SHARE_LABEL 147

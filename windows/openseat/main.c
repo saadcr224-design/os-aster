@@ -23,8 +23,8 @@ int run_controller(HINSTANCE inst, BOOL test, BOOL automatic);
 int run_agent(HINSTANCE inst, BOOL test);
 int run_keep_apart(HINSTANCE inst, BOOL test, BOOL automatic);
 
-enum { ID_ADD = 101, ID_REMOVE, /* not 1 or 2: Enter and Esc send IDOK (1) and IDCANCEL (2) */ ID_FIND, ID_REFRESH, ID_SAVE, ID_START, ID_SHARING, ID_AUTO, ID_MENU_SEAT = 1000, ID_MENU_NONE = 1099 };
-enum { HIT_NONE, HIT_SCREEN, HIT_DEVICE, HIT_SEAT, HIT_IDLE };
+enum { ID_ADD = 101, ID_REMOVE, /* not 1 or 2: Enter and Esc send IDOK (1) and IDCANCEL (2) */ ID_FIND, ID_REFRESH, ID_SAVE, ID_START, ID_SHARING, ID_AUTO, ID_SETUPS, ID_MENU_SEAT = 1000, ID_MENU_NONE = 1099 };
+enum { HIT_NONE, HIT_SCREEN, HIT_DEVICE, HIT_SEAT, HIT_IDLE, HIT_SEAT_START };
 
 static const COLORREF SEAT_COLORS[MAX_SEATS] = {
     RGB(37, 99, 205), RGB(214, 110, 20), RGB(34, 139, 84),  RGB(140, 72, 190), RGB(200, 50, 80),
@@ -44,7 +44,12 @@ static const COLORREF SEAT_COLORS[MAX_SEATS] = {
 
 static BOOL g_dirty, g_finding;
 static int g_dpi = 96;
-static HWND g_wnd, g_btnAdd, g_btnRemove, g_btnFind, g_btnRefresh, g_btnSave, g_btnStart, g_btnSharing, g_btnAuto;
+static HWND g_wnd, g_btnAdd, g_btnRemove, g_btnFind, g_btnRefresh, g_btnSave, g_btnStart, g_btnSharing, g_btnAuto, g_btnSetups;
+/* Starting workplaces one by one. */
+static RECT g_startPill[MAX_SEATS];
+static DWORD g_startAt[MAX_SEATS];          /* when Start was pressed, to tell "Starting" from "Error" */
+static WCHAR g_startError[MAX_SEATS][200];  /* why the last Start was refused */
+static BOOL g_savedOk;                      /* show the green "Setup saved successfully" message */
 /* Automatic setup: which workplace is being asked for which device. */
 static int g_wizSeat = -1, g_wizKind;
 static HWND g_wizPrompt;
@@ -65,13 +70,6 @@ static void refresh_hardware(BOOL automatic);
 
 /* ---- what each workplace has -------------------------------------------- */
 
-static BOOL seat_ready(int seat)
-{
-    if (seat == 0) return seat_screens(0) > 0 && seat_has(0, DEV_KEYBOARD) && seat_has(0, DEV_MOUSE);
-    /* An extra workplace's keyboard and mouse can also be picked at start by pressing them. */
-    return seat_screens(seat) > 0;
-}
-
 static BOOL save_all(void)
 {
     if (!save_setup()) return FALSE;
@@ -79,11 +77,7 @@ static BOOL save_all(void)
     return TRUE;
 }
 
-static void seat_label(int seat, WCHAR *out, size_t chars)
-{
-    if (seat == NOT_USED) lstrcpynW(out, L"Not used", (int)chars);
-    else _snwprintf(out, chars, L"Workplace %d", seat + 1);
-}
+static void seat_label(int seat, WCHAR *out, size_t chars) { seat_name(seat, out, chars); }
 
 static COLORREF seat_color(int seat) { return seat == NOT_USED ? COL_UNUSED : SEAT_COLORS[seat]; }
 
@@ -95,6 +89,7 @@ static COLORREF tint(COLORREF c, int percentWhite)
 
 static void set_status(const WCHAR *text)
 {
+    g_savedOk = FALSE;
     lstrcpynW(g_status, text, 300);
     InvalidateRect(g_wnd, &g_rcBar, FALSE);
 }
@@ -103,7 +98,7 @@ static void update_buttons(void)
 {
     EnableWindow(g_btnAdd, g_seatCount < MAX_SEATS);
     EnableWindow(g_btnRemove, g_seatCount > 1);
-    EnableWindow(g_btnSave, g_dirty);
+    EnableWindow(g_btnSave, TRUE); /* also to save the same layout again under another name */
     EnableWindow(g_btnStart, !g_demo && g_seatCount > 1);
     SetWindowTextW(g_btnFind, g_finding ? L"Stop finding" : L"Find a device");
 }
@@ -113,6 +108,27 @@ static void changed(void)
     g_dirty = TRUE;
     update_buttons();
     InvalidateRect(g_wnd, NULL, FALSE);
+}
+
+/* ---- state of each workplace ----------------------------------------------- */
+
+static BOOL engine_running(void) { return FindWindowW(L"VISIONKeepApart", NULL) != NULL; }
+
+/* Not started / Starting / Running / Error, with the reason for an error. */
+static int seat_state(int seat, WCHAR *why, size_t chars)
+{
+    why[0] = 0;
+    if (!want_running(seat)) {
+        if (g_startError[seat][0]) { lstrcpynW(why, g_startError[seat], (int)chars); return WS_ERROR; }
+        return WS_NOT_STARTED;
+    }
+    WCHAR detail[200];
+    int reported = read_status(seat, detail, 200);
+    if (engine_running() && reported == WS_RUNNING) return WS_RUNNING;
+    if (engine_running() && reported == WS_ERROR) { lstrcpynW(why, detail, (int)chars); return WS_ERROR; }
+    if (GetTickCount() - g_startAt[seat] < 8000) return WS_STARTING;
+    lstrcpynW(why, L"VISION could not start it. Press Start to try again.", (int)chars);
+    return WS_ERROR;
 }
 
 /* ---- layout -------------------------------------------------------------- */
@@ -141,6 +157,7 @@ static void layout(void)
 
     int by = rc.bottom - barH + S(14), bh = S(32);
     MoveWindow(g_btnAuto, rc.right - margin - S(200), S(20), S(200), S(38), TRUE);
+    MoveWindow(g_btnSetups, rc.right - margin - S(132), top - S(2), S(132), S(28), TRUE);
     MoveWindow(g_btnFind, margin, by, S(130), bh, TRUE);
     MoveWindow(g_btnRefresh, margin + S(140), by, S(90), bh, TRUE);
     MoveWindow(g_btnSharing, margin + S(240), by, S(190), bh, TRUE);
@@ -444,21 +461,21 @@ static void paint_devices(HDC dc)
 static void paint_seats(HDC dc)
 {
     RECT area = g_rcSeats;
-    RECT title = { area.left, area.top, area.right, area.top + S(26) };
+    RECT title = { area.left, area.top, area.right - S(136), area.top + S(26) };
     RECT hint = { area.left, area.top + S(28), area.right, area.top + S(48) };
     text(dc, g_fHead, COL_TEXT, title, DT_VCENTER | DT_SINGLELINE, L"Workplaces");
-    text(dc, g_fText, COL_MUTED, hint, DT_SINGLELINE, L"One workplace = one person.");
+    text(dc, g_fText, COL_MUTED, hint, DT_SINGLELINE | DT_END_ELLIPSIS, L"Start each one with its own button.");
 
     /* With many workplaces the cards shrink, down to one line each. */
     int gap = S(6), room = area.bottom - S(40) - (area.top + S(56));
     int cardH = (room - gap * (g_seatCount - 1)) / g_seatCount, y = area.top + S(56);
     if (cardH > S(116)) cardH = S(116);
     if (cardH < S(30)) cardH = S(30);
-    for (int seat = 0; seat < MAX_SEATS; seat++) SetRectEmpty(&g_seatDraw[seat]);
+    for (int seat = 0; seat < MAX_SEATS; seat++) { SetRectEmpty(&g_seatDraw[seat]); SetRectEmpty(&g_startPill[seat]); }
     for (int seat = 0; seat < g_seatCount; seat++, y += cardH + gap) {
-        WCHAR label[40];
+        WCHAR label[NAME_CHARS], why[200];
         COLORREF color = SEAT_COLORS[seat];
-        BOOL ready = seat_ready(seat);
+        int state = seat_state(seat, why, 200);
         RECT card = { area.left, y, area.right, y + cardH };
         g_seatDraw[seat] = card;
         box(dc, card, S(10), COL_PANEL, COL_LINE, 1);
@@ -467,13 +484,24 @@ static void paint_seats(HDC dc)
         RECT stripe = { card.left + 1, card.top + pad, card.left + S(6), card.bottom - pad };
         fill(dc, &stripe, color);
 
-        RECT name = { card.left + S(16), card.top + top, card.right - S(110), card.top + top + S(24) };
-        RECT state = { card.right - S(120), card.top + top, card.right - S(12), card.top + top + S(24) };
-        seat_label(seat, label, 40);
-        text(dc, small ? g_fBold : g_fHead, color, name, DT_VCENTER | DT_SINGLELINE, label);
-        text(dc, g_fBold, ready ? COL_OK : COL_WARN, state, DT_RIGHT | DT_VCENTER | DT_SINGLELINE,
-             seat > 0 && !(g_share[seat] & SHARE_ON) ? L"Switched off" : ready ? L"Ready" : small ? L"Needs a screen" : L"Not complete");
-        if (small) continue; /* details: click the card, or look at the lists on the left */
+        /* Start / Stop button of this workplace only. */
+        static const WCHAR *stateText[] = { L"Not started", L"Starting\x2026", L"Running", L"Error" };
+        static const COLORREF stateColor[] = { RGB(110, 116, 128), RGB(190, 110, 0), RGB(30, 130, 76), RGB(190, 40, 40) };
+        BOOL stoppable = want_running(seat);
+        RECT pill = { card.right - S(74), card.top + top, card.right - S(10), card.top + top + S(24) };
+        g_startPill[seat] = pill;
+        BOOL hoverPill = g_hoverKind == HIT_SEAT_START && g_hoverIndex == seat;
+        COLORREF pillColor = state == WS_STARTING ? RGB(170, 175, 185) : stoppable ? RGB(190, 40, 40) : RGB(30, 130, 76);
+        box(dc, pill, S(8), hoverPill && state != WS_STARTING ? tint(pillColor, 15) : pillColor, pillColor, 1);
+        text(dc, g_fBold, RGB(255, 255, 255), pill, DT_CENTER | DT_VCENTER | DT_SINGLELINE,
+             state == WS_STARTING ? L"\x2026" : stoppable ? L"Stop" : L"Start");
+
+        RECT statusRc = { card.right - S(170), card.top + top, pill.left - S(8), card.top + top + S(24) };
+        RECT name = { card.left + S(16), card.top + top, statusRc.left - S(4), card.top + top + S(24) };
+        seat_label(seat, label, NAME_CHARS);
+        text(dc, small ? g_fBold : g_fHead, color, name, DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS, label);
+        text(dc, g_fBold, stateColor[state], statusRc, DT_RIGHT | DT_VCENTER | DT_SINGLELINE, stateText[state]);
+        if (small) continue; /* details: click the card */
 
         struct { const WCHAR *word; BOOL yes; } parts[3] = {
             { L"Screen", seat_screens(seat) > 0 },
@@ -481,12 +509,10 @@ static void paint_seats(HDC dc)
             { L"Mouse", seat_has(seat, DEV_MOUSE) },
         };
         int x = card.left + S(16), partW = (card.right - card.left - S(28)) / 3;
-        const WCHAR *missing = NULL;
         for (int p = 0; p < 3; p++, x += partW) {
             RECT word = { x + S(22), card.top + S(38), x + partW, card.top + S(58) };
             badge(dc, x, card.top + S(40), S(16), parts[p].yes);
             text(dc, g_fText, COL_TEXT, word, DT_VCENTER | DT_SINGLELINE, parts[p].word);
-            if (!parts[p].yes && !missing) missing = parts[p].word;
         }
         if (cardH < S(86)) continue;
         WCHAR who[120];
@@ -499,15 +525,13 @@ static void paint_seats(HDC dc)
 
         if (cardH < S(112)) continue;
         RECT tip = { card.left + S(16), card.top + S(88), card.right - S(12), card.bottom - S(6) };
-        WCHAR tipText[90];
-        if (ready && seat > 0 && missing)
-            lstrcpynW(tipText, L"Its keyboard and mouse are picked at start.", 90);
-        else if (ready)
-            lstrcpynW(tipText, seat == 0 ? L"This is the workplace you use now." : L"Has everything it needs.", 90);
+        WCHAR problem[200];
+        if (state == WS_ERROR) text(dc, g_fSmall, stateColor[WS_ERROR], tip, DT_SINGLELINE | DT_END_ELLIPSIS, why);
+        else if (state == WS_NOT_STARTED && seat_problem(seat, problem, 200))
+            text(dc, g_fSmall, COL_WARN, tip, DT_SINGLELINE | DT_END_ELLIPSIS, problem);
         else
-            _snwprintf(tipText, 90, L"Still needs a %ls. Click one on the left.",
-                       missing == parts[0].word ? L"screen" : missing == parts[1].word ? L"keyboard" : L"mouse");
-        text(dc, g_fSmall, COL_MUTED, tip, DT_SINGLELINE | DT_END_ELLIPSIS, tipText);
+            text(dc, g_fSmall, COL_MUTED, tip, DT_SINGLELINE | DT_END_ELLIPSIS,
+                 state == WS_RUNNING ? L"Its windows and mouse stay on its own screen." : L"Click the card to rename it or change its settings.");
     }
 }
 
@@ -545,7 +569,7 @@ static void paint(HDC dc)
     RECT line = { 0, g_rcBar.top, rc.right, g_rcBar.top + 1 };
     fill(dc, &line, COL_LINE);
     RECT status = { S(20) + S(446), g_rcBar.top, rc.right - S(20) - S(310), g_rcBar.bottom };
-    text(dc, g_fText, g_dirty && !g_status[0] ? COL_WARN : COL_MUTED, status, DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS,
+    text(dc, g_savedOk ? g_fBold : g_fText, g_savedOk ? COL_OK : g_dirty && !g_status[0] ? COL_WARN : COL_MUTED, status, DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS,
          g_status[0] ? g_status : g_dirty ? L"You have changes that are not saved." : L"");
 }
 
@@ -562,7 +586,9 @@ static int hit_test(POINT pt, int *index)
     if (PtInRect(&list, pt))
         for (int i = 0; i < g_deviceCount; i++)
             if (PtInRect(&g_devices[i].draw, pt)) { *index = i; return HIT_DEVICE; }
-    for (int s = 1; s < g_seatCount; s++)
+    for (int s = 0; s < g_seatCount; s++)
+        if (PtInRect(&g_startPill[s], pt)) { *index = s; return HIT_SEAT_START; }
+    for (int s = 0; s < g_seatCount; s++)
         if (PtInRect(&g_seatDraw[s], pt)) { *index = s; return HIT_SEAT; }
     *index = -1;
     return HIT_NONE;
@@ -670,6 +696,9 @@ static void remove_last_seat(void)
     for (int i = 0; i < g_screenCount; i++) if (g_screens[i].seat == last) g_screens[i].seat = 0;
     for (int i = 0; i < g_deviceCount; i++) if (g_devices[i].seat == last) g_devices[i].seat = 0;
     g_share[last] = SHARE_DEFAULT;
+    g_names[last][0] = 0;
+    if (want_running(last)) set_want_running(last, FALSE); /* a removed workplace stops */
+    g_startError[last][0] = 0;
     g_seatCount--;
     _snwprintf(g_status, 300, L"Workplace %d removed. Its screens and devices went back to Workplace 1.", last + 1);
     changed();
@@ -965,6 +994,293 @@ static void edit_sharing(void)
     }
 }
 
+/* ---- start one workplace ---------------------------------------------------- */
+
+static BOOL launch_engine(void)
+{
+    if (engine_running()) return TRUE; /* it picks up newly started workplaces by itself */
+    WCHAR self[MAX_PATH];
+    GetModuleFileNameW(NULL, self, MAX_PATH);
+    SHELLEXECUTEINFOW info;
+    ZeroMemory(&info, sizeof(info));
+    info.cbSize = sizeof(info);
+    info.hwnd = g_wnd;
+    info.lpVerb = L"open";
+    info.lpFile = self;
+    info.lpParameters = L"--keep-apart";
+    info.nShow = SW_SHOWNORMAL;
+    return ShellExecuteExW(&info);
+}
+
+/* Start only this workplace, with exactly the settings the person entered. */
+static void start_one(int seat)
+{
+    WCHAR why[200], label[NAME_CHARS], msg[300];
+    seat_label(seat, label, NAME_CHARS);
+    if (g_demo) { set_status(L"Demo: workplaces cannot be started in demo mode."); return; }
+    int state = seat_state(seat, why, 200);
+    if (state == WS_STARTING || state == WS_RUNNING) return; /* a second click does nothing */
+    if (seat_problem(seat, why, 200)) {
+        lstrcpynW(g_startError[seat], why, 200);
+        _snwprintf(msg, 300, L"%ls could not start: %ls", label, why);
+        set_status(msg);
+        MessageBeep(MB_ICONWARNING);
+        InvalidateRect(g_wnd, NULL, FALSE);
+        return;
+    }
+    /* Save what is on screen first, so the workplace runs with these settings. */
+    if (g_dirty && !save_all()) { set_status(L"The setup could not be saved, so the workplace was not started."); return; }
+    g_startError[seat][0] = 0;
+    g_startAt[seat] = GetTickCount();
+    report_status(seat, WS_STARTING, NULL);
+    set_want_running(seat, TRUE);
+    if (!launch_engine()) {
+        set_want_running(seat, FALSE);
+        lstrcpynW(g_startError[seat], L"VISION could not be started.", 200);
+    }
+    _snwprintf(msg, 300, L"Starting %ls\x2026", label);
+    set_status(msg);
+    update_buttons();
+    InvalidateRect(g_wnd, NULL, FALSE);
+}
+
+static void stop_one(int seat)
+{
+    WCHAR label[NAME_CHARS], msg[300];
+    seat_label(seat, label, NAME_CHARS);
+    set_want_running(seat, FALSE);
+    g_startError[seat][0] = 0;
+    _snwprintf(msg, 300, L"%ls stopped.", label);
+    set_status(msg);
+    InvalidateRect(g_wnd, NULL, FALSE);
+}
+
+/* ---- one workplace's settings --------------------------------------------- */
+
+static INT_PTR CALLBACK workplace_proc(HWND dlg, UINT msg, WPARAM wp, LPARAM lp)
+{
+    static int seat;
+    static const int boxes[4] = { IDC_WP_ON, IDC_WP_CLIP, IDC_WP_FOLDER, IDC_WP_SOUND };
+    if (msg == WM_INITDIALOG) {
+        WCHAR title[80], info[300], name[NAME_CHARS];
+        seat = (int)lp;
+        seat_label(seat, name, NAME_CHARS);
+        _snwprintf(title, 80, L"%ls settings", name);
+        SetWindowTextW(dlg, title);
+        SetDlgItemTextW(dlg, IDC_WP_NAME, g_names[seat]);
+        SendDlgItemMessageW(dlg, IDC_WP_NAME, EM_LIMITTEXT, NAME_CHARS - 1, 0);
+        int scr = seat_first_screen(seat);
+        _snwprintf(info, 300, L"Screen: %ls\r\nKeyboard: %ls   Mouse: %ls",
+                   scr >= 0 ? (g_screens[scr].name[0] ? g_screens[scr].name : L"yes") : L"none yet",
+                   seat_has(seat, DEV_KEYBOARD) ? L"yes" : L"none yet", seat_has(seat, DEV_MOUSE) ? L"yes" : L"none yet");
+        SetDlgItemTextW(dlg, IDC_WP_INFO, info);
+        for (int i = 0; i < 4; i++) {
+            CheckDlgButton(dlg, boxes[i], (g_share[seat] & (1 << i)) ? BST_CHECKED : BST_UNCHECKED);
+            ShowWindow(GetDlgItem(dlg, boxes[i]), seat > 0 ? SW_SHOW : SW_HIDE); /* workplace 1 is the main desktop */
+        }
+        ShowWindow(GetDlgItem(dlg, IDC_WP_SHARE_LABEL), seat > 0 ? SW_SHOW : SW_HIDE);
+        return TRUE;
+    }
+    if (msg != WM_COMMAND) return FALSE;
+    if (LOWORD(wp) == IDCANCEL) { EndDialog(dlg, IDCANCEL); return TRUE; }
+    if (LOWORD(wp) != IDOK) return FALSE;
+    WCHAR name[NAME_CHARS];
+    GetDlgItemTextW(dlg, IDC_WP_NAME, name, NAME_CHARS);
+    for (WCHAR *c = name; *c; c++) if (*c < 32 || *c == L'|' || *c == L'[' || *c == L']') *c = L' ';
+    lstrcpynW(g_names[seat], name, NAME_CHARS);
+    if (seat > 0) {
+        int flags = 0;
+        for (int i = 0; i < 4; i++) if (IsDlgButtonChecked(dlg, boxes[i]) == BST_CHECKED) flags |= 1 << i;
+        g_share[seat] = flags;
+    }
+    EndDialog(dlg, IDOK);
+    return TRUE;
+}
+
+static void edit_workplace(int seat)
+{
+    if (DialogBoxParamW(GetModuleHandleW(NULL), MAKEINTRESOURCEW(IDD_WORKPLACE), g_wnd, workplace_proc, (LPARAM)seat) == IDOK) {
+        g_startError[seat][0] = 0;
+        lstrcpynW(g_status, want_running(seat) ? L"Settings changed. Not saved yet; Save setup applies them to the running workplace."
+                                               : L"Settings changed. Not saved yet.", 300);
+        changed();
+    }
+}
+
+/* ---- named saved setups ------------------------------------------------------ */
+
+static WCHAR g_nameBuf[80];
+
+static INT_PTR CALLBACK name_proc(HWND dlg, UINT msg, WPARAM wp, LPARAM lp)
+{
+    if (msg == WM_INITDIALOG) {
+        SetWindowTextW(dlg, lp ? L"Rename setup" : L"Save setup");
+        SetDlgItemTextW(dlg, IDC_NAME_PROMPT, lp ? L"New name for this saved setup:"
+                                                 : L"Name for this setup. It is saved as a new setup; older ones are kept.");
+        SetDlgItemTextW(dlg, IDOK, lp ? L"Rename" : L"Save");
+        SetDlgItemTextW(dlg, IDC_NAME_EDIT, g_nameBuf);
+        SendDlgItemMessageW(dlg, IDC_NAME_EDIT, EM_LIMITTEXT, 79, 0);
+        SendDlgItemMessageW(dlg, IDC_NAME_EDIT, EM_SETSEL, 0, -1);
+        return TRUE;
+    }
+    if (msg != WM_COMMAND) return FALSE;
+    if (LOWORD(wp) == IDCANCEL) { EndDialog(dlg, IDCANCEL); return TRUE; }
+    if (LOWORD(wp) != IDOK) return FALSE;
+    GetDlgItemTextW(dlg, IDC_NAME_EDIT, g_nameBuf, 80);
+    for (WCHAR *c = g_nameBuf; *c; c++) if (*c < 32) *c = L' ';
+    WCHAR *t = g_nameBuf;
+    while (*t == L' ') t++;
+    if (!*t) { MessageBoxW(dlg, L"Please type a name.", L"VISION", MB_OK | MB_ICONINFORMATION); return TRUE; }
+    memmove(g_nameBuf, t, (wcslen(t) + 1) * sizeof(WCHAR));
+    EndDialog(dlg, IDOK);
+    return TRUE;
+}
+
+/* Save setup: keeps the current state of every workplace as a new named setup. */
+static void save_named(void)
+{
+    SYSTEMTIME t;
+    GetLocalTime(&t);
+    _snwprintf(g_nameBuf, 80, L"Setup %04u-%02u-%02u %02u.%02u", t.wYear, t.wMonth, t.wDay, t.wHour, t.wMinute);
+    if (DialogBoxParamW(GetModuleHandleW(NULL), MAKEINTRESOURCEW(IDD_NAME), g_wnd, name_proc, 0) != IDOK) return;
+    if (!save_all()) { MessageBoxW(g_wnd, L"The setup could not be saved.", L"VISION", MB_OK | MB_ICONERROR); return; }
+    int id = save_snapshot(g_nameBuf);
+    if (!id) { MessageBoxW(g_wnd, L"The setup could not be saved.", L"VISION", MB_OK | MB_ICONERROR); return; }
+    _snwprintf(g_status, 300, L"Setup saved successfully: \"%ls\" (ID %d).", g_nameBuf, id);
+    g_status[299] = 0;
+    g_savedOk = TRUE;
+    update_buttons();
+    InvalidateRect(g_wnd, NULL, FALSE);
+}
+
+static Snapshot *g_snaps;
+static int g_snapCount;
+
+static void fill_setup_list(HWND dlg, int selectId)
+{
+    HWND list = GetDlgItem(dlg, IDC_SETUP_LIST);
+    ListView_DeleteAllItems(list);
+    g_snapCount = list_snapshots(g_snaps, MAX_SNAPSHOTS);
+    int select = 0;
+    for (int i = 0; i < g_snapCount; i++) {
+        WCHAR id[16], count[8];
+        _snwprintf(id, 16, L"%d", g_snaps[i].id);
+        _snwprintf(count, 8, L"%d", g_snaps[i].workplaces);
+        LVITEMW it;
+        ZeroMemory(&it, sizeof(it));
+        it.mask = LVIF_TEXT | LVIF_PARAM;
+        it.iItem = i;
+        it.pszText = id;
+        it.lParam = g_snaps[i].id;
+        ListView_InsertItem(list, &it);
+        ListView_SetItemText(list, i, 1, g_snaps[i].name);
+        ListView_SetItemText(list, i, 2, g_snaps[i].saved);
+        ListView_SetItemText(list, i, 3, count);
+        if (g_snaps[i].id == selectId) select = i;
+    }
+    ShowWindow(GetDlgItem(dlg, IDC_SETUP_EMPTY), g_snapCount ? SW_HIDE : SW_SHOW);
+    for (int b = IDC_SETUP_OPEN; b <= IDC_SETUP_DELETE; b++) EnableWindow(GetDlgItem(dlg, b), g_snapCount > 0);
+    SetDlgItemTextW(dlg, IDC_SETUP_DETAILS, L"");
+    if (g_snapCount) ListView_SetItemState(list, select, LVIS_SELECTED | LVIS_FOCUSED, LVIS_SELECTED | LVIS_FOCUSED);
+}
+
+static int selected_setup(HWND dlg, int *index)
+{
+    int i = ListView_GetNextItem(GetDlgItem(dlg, IDC_SETUP_LIST), -1, LVNI_SELECTED);
+    if (index) *index = i;
+    return (i >= 0 && i < g_snapCount) ? g_snaps[i].id : 0;
+}
+
+static INT_PTR CALLBACK setups_proc(HWND dlg, UINT msg, WPARAM wp, LPARAM lp)
+{
+    if (msg == WM_INITDIALOG) {
+        HWND list = GetDlgItem(dlg, IDC_SETUP_LIST);
+        ListView_SetExtendedListViewStyle(list, LVS_EX_FULLROWSELECT);
+        static const WCHAR *cols[] = { L"ID", L"Name", L"Saved", L"Workplaces" };
+        static const int widths[] = { 34, 150, 118, 70 };
+        for (int c = 0; c < 4; c++) {
+            LVCOLUMNW col;
+            ZeroMemory(&col, sizeof(col));
+            col.mask = LVCF_TEXT | LVCF_WIDTH;
+            col.pszText = (LPWSTR)cols[c];
+            col.cx = MulDiv(widths[c], g_dpi, 96);
+            ListView_InsertColumn(list, c, &col);
+        }
+        fill_setup_list(dlg, 0);
+        return TRUE;
+    }
+    if (msg == WM_NOTIFY) {
+        NMHDR *n = (NMHDR *)lp;
+        if (n->idFrom == IDC_SETUP_LIST && n->code == LVN_ITEMCHANGED) {
+            int id = selected_setup(dlg, NULL);
+            WCHAR *text = calloc(16384, sizeof(WCHAR));
+            if (text) {
+                if (id) describe_snapshot(id, text, 16384);
+                SetDlgItemTextW(dlg, IDC_SETUP_DETAILS, text);
+                free(text);
+            }
+        } else if (n->idFrom == IDC_SETUP_LIST && n->code == NM_DBLCLK) {
+            PostMessageW(dlg, WM_COMMAND, IDC_SETUP_OPEN, 0);
+        }
+        return FALSE;
+    }
+    if (msg != WM_COMMAND) return FALSE;
+    int index, id = selected_setup(dlg, &index);
+    switch (LOWORD(wp)) {
+    case IDCANCEL:
+        EndDialog(dlg, 0);
+        return TRUE;
+    case IDC_SETUP_OPEN:
+        if (!id) return TRUE;
+        if (g_dirty && MessageBoxW(dlg, L"The changes you have not saved will be replaced by this setup. Open it anyway?",
+                                   L"VISION", MB_YESNO | MB_ICONQUESTION) != IDYES)
+            return TRUE;
+        EndDialog(dlg, id);
+        return TRUE;
+    case IDC_SETUP_RENAME:
+        if (!id) return TRUE;
+        lstrcpynW(g_nameBuf, g_snaps[index].name, 80);
+        if (DialogBoxParamW(GetModuleHandleW(NULL), MAKEINTRESOURCEW(IDD_NAME), dlg, name_proc, 1) == IDOK) {
+            rename_snapshot(id, g_nameBuf);
+            fill_setup_list(dlg, id);
+        }
+        return TRUE;
+    case IDC_SETUP_DELETE: {
+        if (!id) return TRUE;
+        WCHAR q[200];
+        _snwprintf(q, 200, L"Delete the saved setup \"%ls\" (ID %d)? This cannot be undone.", g_snaps[index].name, id);
+        if (MessageBoxW(dlg, q, L"VISION", MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2) == IDYES) {
+            delete_snapshot(id);
+            fill_setup_list(dlg, 0);
+        }
+        return TRUE;
+    }
+    }
+    return FALSE;
+}
+
+static void show_saved_setups(void)
+{
+    Snapshot *all = calloc(MAX_SNAPSHOTS, sizeof(Snapshot));
+    if (!all) return;
+    g_snaps = all;
+    int id = (int)DialogBoxParamW(GetModuleHandleW(NULL), MAKEINTRESOURCEW(IDD_SETUPS), g_wnd, setups_proc, 0);
+    WCHAR name[80] = L"";
+    for (int i = 0; i < g_snapCount; i++) if (g_snaps[i].id == id) lstrcpynW(name, g_snaps[i].name, 80);
+    g_snaps = NULL;
+    free(all);
+    if (id <= 0) return;
+    if (!open_snapshot(id)) { MessageBoxW(g_wnd, L"That setup could not be opened.", L"VISION", MB_OK | MB_ICONERROR); return; }
+    /* Use it exactly as saved: no automatic changes on top. */
+    for (int s = 0; s < MAX_SEATS; s++) g_startError[s][0] = 0;
+    g_dirty = FALSE;
+    layout();
+    update_buttons();
+    _snwprintf(g_status, 300, L"Opened \"%ls\" (ID %d) exactly as it was saved.", name, id);
+    g_status[299] = 0;
+    InvalidateRect(g_wnd, NULL, FALSE);
+}
+
 static void start_workplaces(void)
 {
     WCHAR msg[300];
@@ -976,6 +1292,20 @@ static void start_workplaces(void)
     }
     if (g_dirty && !save_all()) {
         MessageBoxW(g_wnd, L"The setup could not be saved.", L"VISION", MB_OK | MB_ICONERROR);
+        return;
+    }
+    if (!is_server_os()) { /* Windows 10/11: start every workplace that has a screen, one by one */
+        int started = 0, refused = 0;
+        for (int s = 0; s < g_seatCount; s++) {
+            WCHAR why[200];
+            if (seat_first_screen(s) < 0) continue;
+            if (want_running(s)) { started++; continue; }
+            if (seat_problem(s, why, 200)) { lstrcpynW(g_startError[s], why, 200); refused++; continue; }
+            start_one(s);
+            started++;
+        }
+        if (refused) set_status(L"Some workplaces could not start. Their cards say why.");
+        InvalidateRect(g_wnd, NULL, FALSE);
         return;
     }
     WCHAR self[MAX_PATH];
@@ -1080,8 +1410,10 @@ static LRESULT CALLBACK wnd_proc(HWND wnd, UINT msg, WPARAM wp, LPARAM lp)
         g_fHuge = make_font(26, FW_BOLD);
         g_btnFind = make_button(L"Find a device", ID_FIND, FALSE);
         g_btnAuto = make_button(L"\x2728  Automatic setup", ID_AUTO, FALSE);
+        g_btnSetups = make_button(L"Saved setups", ID_SETUPS, FALSE);
+        SetTimer(wnd, 4, 700, NULL); /* keep each workplace's status up to date */
         g_btnRefresh = make_button(L"Refresh", ID_REFRESH, FALSE);
-        g_btnSave = make_button(L"Save setup", ID_SAVE, TRUE);
+        g_btnSave = make_button(L"Save setup", ID_SAVE, FALSE); /* not the default button: Enter must not save by accident */
         g_btnAdd = make_button(L"Add a workplace", ID_ADD, FALSE);
         g_btnRemove = make_button(L"Remove last", ID_REMOVE, FALSE);
         g_btnStart = make_button(L"Start workplaces", ID_START, FALSE);
@@ -1152,6 +1484,13 @@ static LRESULT CALLBACK wnd_proc(HWND wnd, UINT msg, WPARAM wp, LPARAM lp)
     case WM_LBUTTONUP: {
         POINT pt = { GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
         int index, kind = hit_test(pt, &index);
+        if (kind == HIT_SEAT_START) {
+            WCHAR why[200];
+            int state = seat_state(index, why, 200);
+            if (state == WS_STARTING) return 0;                      /* already on its way */
+            if (want_running(index)) stop_one(index); else start_one(index);
+            return 0;
+        }
         if (kind == HIT_IDLE) {
             if (extend_displays()) {
                 set_status(L"Turning the screen on\x2026 It appears above with its own workplace.");
@@ -1160,7 +1499,7 @@ static LRESULT CALLBACK wnd_proc(HWND wnd, UINT msg, WPARAM wp, LPARAM lp)
                 set_status(L"Windows could not turn it on. Press the Windows key + P and choose Extend.");
             }
         } else if (kind == HIT_SEAT) {
-            edit_sharing();
+            edit_workplace(index);
         } else if (kind != HIT_NONE) {
             BOOL inRow = kind == HIT_SCREEN && PtInRect(&g_screenRow[index], pt);
             RECT r = inRow ? g_screenRow[index] : kind == HIT_SCREEN ? g_screens[index].draw : g_devices[index].draw;
@@ -1192,6 +1531,7 @@ static LRESULT CALLBACK wnd_proc(HWND wnd, UINT msg, WPARAM wp, LPARAM lp)
         DWORD now = GetTickCount();
         if (wp == 2) { demo_find_tick(); return 0; }
         if (wp == 3) { KillTimer(wnd, 3); if (!g_demo) refresh_hardware(TRUE); return 0; }
+        if (wp == 4) { InvalidateRect(wnd, &g_rcSeats, FALSE); return 0; }
         for (int i = 0; i < g_deviceCount; i++) {
             if (!g_devices[i].flashUntil) continue;
             if ((int)(g_devices[i].flashUntil - now) <= 0) g_devices[i].flashUntil = 0;
@@ -1242,10 +1582,10 @@ static LRESULT CALLBACK wnd_proc(HWND wnd, UINT msg, WPARAM wp, LPARAM lp)
             start_workplaces();
             return 0;
         case ID_SAVE:
-            if (save_all()) set_status(L"Saved.");
-            else MessageBoxW(wnd, L"The setup could not be saved.", L"VISION", MB_OK | MB_ICONERROR);
-            update_buttons();
-            InvalidateRect(wnd, NULL, FALSE);
+            save_named();
+            return 0;
+        case ID_SETUPS:
+            show_saved_setups();
             return 0;
         }
         break;
@@ -1275,7 +1615,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE prev, PWSTR cmd, int show)
     if (cmd && wcsstr(cmd, L"--keep-apart")) return run_keep_apart(inst, test, wcsstr(cmd, L"--auto") != NULL);
     g_demo = cmd && wcsstr(cmd, L"--demo") != NULL;
 
-    INITCOMMONCONTROLSEX icc = { sizeof(icc), ICC_STANDARD_CLASSES };
+    INITCOMMONCONTROLSEX icc = { sizeof(icc), ICC_STANDARD_CLASSES | ICC_LISTVIEW_CLASSES };
     InitCommonControlsEx(&icc);
 
     WNDCLASSEXW cls;
