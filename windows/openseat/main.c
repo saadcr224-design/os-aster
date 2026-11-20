@@ -136,7 +136,33 @@ static int seat_state(int seat, WCHAR *why, size_t chars)
 #define ROW_H 46
 #define SCREEN_ROW_H 34
 
-static int device_rows_height(void) { return g_deviceCount * S(ROW_H); }
+#define TILE_W 172
+#define TILE_H 112
+#define TILE_GAP 10
+
+/* The device portal shows every keyboard and mouse as a tile. */
+static int tile_columns(void)
+{
+    int w = g_rcDevices.right - g_rcDevices.left - S(TILE_GAP) * 2;
+    int cols = (w + S(TILE_GAP)) / (S(TILE_W) + S(TILE_GAP));
+    return cols < 1 ? 1 : cols;
+}
+
+static int device_rows_height(void)
+{
+    int cols = tile_columns(), rows = (g_deviceCount + cols - 1) / cols;
+    return rows * (S(TILE_H) + S(TILE_GAP)) + S(TILE_GAP);
+}
+
+/* Scroll so a device's tile is visible. */
+static void show_device(int i)
+{
+    int cols = tile_columns(), viewH = g_rcDevices.bottom - g_rcDevices.top - S(62);
+    int top = (i / cols) * (S(TILE_H) + S(TILE_GAP));
+    if (top < g_scroll) g_scroll = top;
+    if (top + S(TILE_H) + S(TILE_GAP) * 2 > g_scroll + viewH) g_scroll = top + S(TILE_H) + S(TILE_GAP) * 2 - viewH;
+    if (g_scroll < 0) g_scroll = 0;
+}
 
 static void layout(void)
 {
@@ -374,35 +400,39 @@ static void paint_screens(HDC dc)
     }
 }
 
-static void paint_device_icon(HDC dc, RECT rc, int kinds, COLORREF color)
+/* scale in percent: 100 for list rows, larger for the device tiles. */
+#define Z(v) MulDiv(S(v), scale, 100)
+static void paint_device_icon_scaled(HDC dc, RECT rc, int kinds, COLORREF color, int scale)
 {
-    HPEN pen = CreatePen(PS_SOLID, S(2), color);
+    HPEN pen = CreatePen(PS_SOLID, Z(2), color);
     HGDIOBJ oldPen = SelectObject(dc, pen), oldBrush = SelectObject(dc, GetStockObject(NULL_BRUSH));
     int cx = (rc.left + rc.right) / 2, cy = (rc.top + rc.bottom) / 2;
     if (kinds & DEV_KEYBOARD) {
-        int w = S(kinds & DEV_MOUSE ? 18 : 26), x = (kinds & DEV_MOUSE) ? rc.left : cx - w / 2;
-        RoundRect(dc, x, cy - S(8), x + w, cy + S(8), S(4), S(4));
-        MoveToEx(dc, x + S(5), cy + S(3), NULL);
-        LineTo(dc, x + w - S(5), cy + S(3));
-        MoveToEx(dc, x + S(5), cy - S(3), NULL);
-        LineTo(dc, x + w - S(5), cy - S(3));
+        int w = Z(kinds & DEV_MOUSE ? 18 : 26), x = (kinds & DEV_MOUSE) ? cx - Z(16) : cx - w / 2; /* side by side, centred */
+        RoundRect(dc, x, cy - Z(8), x + w, cy + Z(8), Z(4), Z(4));
+        MoveToEx(dc, x + Z(5), cy + Z(3), NULL);
+        LineTo(dc, x + w - Z(5), cy + Z(3));
+        MoveToEx(dc, x + Z(5), cy - Z(3), NULL);
+        LineTo(dc, x + w - Z(5), cy - Z(3));
     }
     if (kinds & DEV_MOUSE) {
-        int x = (kinds & DEV_KEYBOARD) ? rc.right - S(10) : cx - S(7), w = (kinds & DEV_KEYBOARD) ? S(10) : S(14);
-        RoundRect(dc, x, cy - S(11), x + w, cy + S(11), w, w);
-        MoveToEx(dc, x + w / 2, cy - S(7), NULL);
-        LineTo(dc, x + w / 2, cy - S(2));
+        int x = (kinds & DEV_KEYBOARD) ? cx + Z(6) : cx - Z(7), w = (kinds & DEV_KEYBOARD) ? Z(10) : Z(14);
+        RoundRect(dc, x, cy - Z(11), x + w, cy + Z(11), w, w);
+        MoveToEx(dc, x + w / 2, cy - Z(7), NULL);
+        LineTo(dc, x + w / 2, cy - Z(2));
     }
     SelectObject(dc, oldPen);
     SelectObject(dc, oldBrush);
     DeleteObject(pen);
 }
 
+#undef Z
+
 static void paint_devices(HDC dc)
 {
     RECT area = g_rcDevices, list;
-    section_title(dc, area, 2, L"Keyboards and mice",
-                  L"Click a device to choose its workplace. Not sure which one it is? Use \x201C" L"Find a device\x201D.");
+    section_title(dc, area, 2, L"Devices: keyboards and mice",
+                  L"Each device works only on its own workplace's screen. Click one to move it. The one in use blinks.");
     SetRect(&list, area.left, area.top + S(56), area.right, area.bottom);
     box(dc, list, S(10), COL_PANEL, COL_LINE, 1);
     if (g_deviceCount == 0) {
@@ -413,47 +443,49 @@ static void paint_devices(HDC dc)
     int saved = SaveDC(dc);
     IntersectClipRect(dc, list.left + 1, list.top + S(3), list.right - 1, list.bottom - S(3));
     DWORD now = GetTickCount();
+    int cols = tile_columns();
     for (int i = 0; i < g_deviceCount; i++) {
         Device *d = &g_devices[i];
-        WCHAR label[32];
+        WCHAR label[NAME_CHARS + 20];
         COLORREF color = seat_color(d->seat);
         BOOL hover = g_hoverKind == HIT_DEVICE && g_hoverIndex == i;
-        BOOL flash = d->flashUntil && (int)(d->flashUntil - now) > 0;
-        int y = list.top + S(3) + i * S(ROW_H) - g_scroll;
-        SetRect(&d->draw, list.left + 1, y, list.right - 1, y + S(ROW_H));
-        if (flash || hover) fill(dc, &d->draw, flash ? COL_FLASH : RGB(240, 244, 250));
+        BOOL inUse = d->flashUntil && (int)(d->flashUntil - now) > 0;
+        BOOL blinkOn = inUse && (now / 250) % 2 == 0; /* in use: blinks on and off */
+        int x = list.left + S(TILE_GAP) + (i % cols) * (S(TILE_W) + S(TILE_GAP));
+        int y = list.top + S(TILE_GAP) + (i / cols) * (S(TILE_H) + S(TILE_GAP)) - g_scroll;
+        SetRect(&d->draw, x, y, x + S(TILE_W), y + S(TILE_H));
+        box(dc, d->draw, S(12), blinkOn ? COL_FLASH : hover ? RGB(240, 244, 250) : RGB(250, 251, 253),
+            inUse ? color : hover ? tint(color, 40) : COL_LINE, inUse ? S(3) : 1);
 
-        RECT bar = { d->draw.left + S(8), y + S(8), d->draw.left + S(13), y + S(ROW_H) - S(8) };
-        fill(dc, &bar, color);
-        RECT icon = { d->draw.left + S(24), y, d->draw.left + S(56), y + S(ROW_H) };
-        paint_device_icon(dc, icon, d->kinds, COL_MUTED);
+        /* the device itself, drawn large, in its workplace's colour */
+        RECT icon = { x, y + S(8), x + S(TILE_W), y + S(48) };
+        paint_device_icon_scaled(dc, icon, d->kinds, d->seat == NOT_USED ? COL_UNUSED : color, 170);
+        if (inUse) {
+            RECT tag = { x + S(TILE_W) - S(62), y + S(6), x + S(TILE_W) - S(6), y + S(24) };
+            box(dc, tag, S(8), color, color, 1);
+            text(dc, g_fSmall, RGB(255, 255, 255), tag, DT_CENTER | DT_VCENTER | DT_SINGLELINE, L"in use");
+        }
+        RECT name = { x + S(8), y + S(50), x + S(TILE_W) - S(8), y + S(70) };
+        text(dc, g_fBold, COL_TEXT, name, DT_CENTER | DT_SINGLELINE | DT_END_ELLIPSIS, d->name);
 
-        int pillW = S(132);
-        RECT pill = { d->draw.right - pillW - S(12), y + S(9), d->draw.right - S(12), y + S(ROW_H) - S(9) };
-        RECT name = { d->draw.left + S(68), y + S(5), pill.left - S(10), y + S(25) };
-        RECT kind = { name.left, y + S(24), name.right, y + S(ROW_H) - S(3) };
-        text(dc, g_fBold, COL_TEXT, name, DT_SINGLELINE | DT_END_ELLIPSIS, d->name);
-        text(dc, g_fSmall, COL_MUTED, kind, DT_SINGLELINE | DT_END_ELLIPSIS,
-             flash ? L"This is the device you just used" : kind_name(d->kinds));
-
+        /* which workplace (and screen) it belongs to; click to move it */
+        RECT pill = { x + S(10), y + S(TILE_H) - S(34), x + S(TILE_W) - S(10), y + S(TILE_H) - S(10) };
         box(dc, pill, S(8), tint(color, 86), color, 1);
-        RECT pillText = { pill.left + S(10), pill.top, pill.right - S(22), pill.bottom };
-        seat_label(d->seat, label, 32);
-        text(dc, g_fText, color, pillText, DT_VCENTER | DT_SINGLELINE, label);
-        POINT arrow[3] = { { pill.right - S(18), (pill.top + pill.bottom) / 2 - S(2) },
-                           { pill.right - S(10), (pill.top + pill.bottom) / 2 - S(2) },
-                           { pill.right - S(14), (pill.top + pill.bottom) / 2 + S(3) } };
+        int scr = d->seat >= 0 ? seat_first_screen(d->seat) : -1;
+        seat_label(d->seat, label, NAME_CHARS);
+        if (scr >= 0) _snwprintf(label + wcslen(label), 20, L" \x00B7 screen %d", scr + 1);
+        label[NAME_CHARS + 19] = 0;
+        RECT pillText = { pill.left + S(8), pill.top, pill.right - S(20), pill.bottom };
+        text(dc, g_fSmall, color, pillText, DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS, label);
+        POINT arrow[3] = { { pill.right - S(16), (pill.top + pill.bottom) / 2 - S(2) },
+                           { pill.right - S(8), (pill.top + pill.bottom) / 2 - S(2) },
+                           { pill.right - S(12), (pill.top + pill.bottom) / 2 + S(3) } };
         HBRUSH brush = CreateSolidBrush(color);
         HGDIOBJ oldBrush = SelectObject(dc, brush), oldPen = SelectObject(dc, GetStockObject(NULL_PEN));
         Polygon(dc, arrow, 3);
         SelectObject(dc, oldBrush);
         SelectObject(dc, oldPen);
         DeleteObject(brush);
-
-        if (i < g_deviceCount - 1) {
-            RECT line = { d->draw.left + S(8), y + S(ROW_H) - 1, d->draw.right - S(8), y + S(ROW_H) };
-            fill(dc, &line, RGB(236, 238, 241));
-        }
     }
     RestoreDC(dc, saved);
 }
@@ -598,12 +630,27 @@ static void choose_seat(int kind, int index, POINT screenPt)
 {
     HMENU menu = CreatePopupMenu();
     int current = kind == HIT_SCREEN ? g_screens[index].seat : g_devices[index].seat;
+    if (kind == HIT_DEVICE) {
+        WCHAR title[200];
+        _snwprintf(title, 200, L"Move \x201C%ls\x201D to:", g_devices[index].name);
+        title[199] = 0;
+        AppendMenuW(menu, MF_STRING | MF_DISABLED, 0, title);
+        AppendMenuW(menu, MF_SEPARATOR, 0, NULL);
+    }
     for (int seat = 0; seat < g_seatCount; seat++) {
-        WCHAR label[80];
+        WCHAR label[160];
         int other = kind == HIT_SCREEN ? seat_first_screen(seat) : -1;
         seat_label(seat, label, 80);
+        int scr = seat_first_screen(seat);
+        if (kind == HIT_DEVICE && scr >= 0) {
+            if (g_screens[scr].name[0])
+                _snwprintf(label + wcslen(label), 160 - wcslen(label), L"   \x00B7  screen %d (%ls)", scr + 1, g_screens[scr].name);
+            else
+                _snwprintf(label + wcslen(label), 160 - wcslen(label), L"   \x00B7  screen %d", scr + 1);
+            label[159] = 0;
+        }
         if (kind == HIT_SCREEN && seat != current && other >= 0) /* one screen per workplace: this swaps them */
-            _snwprintf(label + wcslen(label), 80 - wcslen(label), L"   (swap with screen %d)", other + 1);
+            _snwprintf(label + wcslen(label), 160 - wcslen(label), L"   (swap with screen %d)", other + 1);
         AppendMenuW(menu, MF_STRING | (seat == current ? MF_CHECKED : 0), ID_MENU_SEAT + seat, label);
     }
     if (g_seatCount < MAX_SEATS) AppendMenuW(menu, MF_STRING, ID_MENU_SEAT + g_seatCount, L"New workplace");
@@ -704,13 +751,19 @@ static void remove_last_seat(void)
     changed();
 }
 
-static void set_finding(BOOL on)
+/* VISION always watches the keyboards and mice, so the one in use blinks. */
+static BOOL watch_devices(void)
 {
     RAWINPUTDEVICE want[2] = {
-        { 1, 6, on ? RIDEV_INPUTSINK : RIDEV_REMOVE, on ? g_wnd : NULL }, /* keyboards */
-        { 1, 2, on ? RIDEV_INPUTSINK : RIDEV_REMOVE, on ? g_wnd : NULL }, /* mice */
+        { 1, 6, RIDEV_INPUTSINK, g_wnd }, /* keyboards */
+        { 1, 2, RIDEV_INPUTSINK, g_wnd }, /* mice */
     };
-    if (!RegisterRawInputDevices(want, 2, sizeof(want[0])) && on) {
+    return RegisterRawInputDevices(want, 2, sizeof(want[0]));
+}
+
+static void set_finding(BOOL on)
+{
+    if (on && !watch_devices()) {
         set_status(L"Windows did not allow watching the devices.");
         return;
     }
@@ -723,7 +776,7 @@ static void on_raw_input(HRAWINPUT raw)
 {
     RAWINPUT input;
     UINT size = sizeof(input);
-    if ((!g_finding && g_wizSeat < 0) || GetRawInputData(raw, RID_INPUT, &input, &size, sizeof(RAWINPUTHEADER)) == (UINT)-1) return;
+    if (GetRawInputData(raw, RID_INPUT, &input, &size, sizeof(RAWINPUTHEADER)) == (UINT)-1) return;
     if (g_wizSeat >= 0) { wizard_input(&input); return; }
     if (!input.header.hDevice) return;
     for (int i = 0; i < g_deviceCount; i++) {
@@ -733,19 +786,17 @@ static void on_raw_input(HRAWINPUT raw)
             BOOL fresh = !d->flashUntil;
             d->flashUntil = GetTickCount() + 1500;
             if (d->flashUntil == 0) d->flashUntil = 1;
-            if (fresh) {
+            if (fresh && g_finding) { /* "Find a device": also scroll to it and say which it is */
                 WCHAR label[40], msg[300];
-                int viewH = g_rcDevices.bottom - g_rcDevices.top - S(62), rowTop = i * S(ROW_H);
-                if (rowTop < g_scroll) g_scroll = rowTop;
-                if (rowTop + S(ROW_H) > g_scroll + viewH) g_scroll = rowTop + S(ROW_H) - viewH;
-                if (g_scroll < 0) g_scroll = 0;
+                show_device(i);
                 seat_label(d->seat, label, 40);
                 _snwprintf(msg, 300, L"You used: %ls  (%ls)", d->name, label);
                 msg[299] = 0;
                 lstrcpynW(g_status, msg, 300);
                 InvalidateRect(g_wnd, NULL, FALSE);
             }
-            SetTimer(g_wnd, 1, 200, NULL);
+            if (fresh) InvalidateRect(g_wnd, &g_rcDevices, FALSE);
+            SetTimer(g_wnd, 1, 125, NULL); /* blink */
             return;
         }
     }
@@ -792,15 +843,7 @@ static LRESULT CALLBACK wizard_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
     return DefWindowProcW(w, msg, wp, lp);
 }
 
-static void wizard_watch(BOOL on)
-{
-    if (g_finding) return; /* "Find a device" already watches */
-    RAWINPUTDEVICE want[2] = {
-        { 1, 6, on ? RIDEV_INPUTSINK : RIDEV_REMOVE, on ? g_wnd : NULL },
-        { 1, 2, on ? RIDEV_INPUTSINK : RIDEV_REMOVE, on ? g_wnd : NULL },
-    };
-    RegisterRawInputDevices(want, 2, sizeof(want[0]));
-}
+static void wizard_watch(BOOL on) { if (on) watch_devices(); } /* devices are always watched */
 
 static void start_workplaces(void);
 
@@ -904,6 +947,7 @@ static void demo_find_tick(void)
     Device *d = &g_devices[next++ % g_deviceCount];
     WCHAR label[40], msg[300];
     d->flashUntil = GetTickCount() + 1500;
+    SetTimer(g_wnd, 1, 125, NULL);
     seat_label(d->seat, label, 40);
     _snwprintf(msg, 300, L"You used: %ls  (%ls)", d->name, label);
     lstrcpynW(g_status, msg, 300);
@@ -1418,6 +1462,7 @@ static LRESULT CALLBACK wnd_proc(HWND wnd, UINT msg, WPARAM wp, LPARAM lp)
         g_btnAuto = make_button(L"\x2728  Automatic setup", ID_AUTO, FALSE);
         g_btnSetups = make_button(L"Saved setups", ID_SETUPS, FALSE);
         SetTimer(wnd, 4, 700, NULL); /* keep each workplace's status up to date */
+        if (!g_demo) watch_devices();
         g_btnRefresh = make_button(L"Refresh", ID_REFRESH, FALSE);
         g_btnSave = make_button(L"Save setup", ID_SAVE, FALSE); /* not the default button: Enter must not save by accident */
         g_btnAdd = make_button(L"Add a workplace", ID_ADD, FALSE);
@@ -1509,7 +1554,7 @@ static LRESULT CALLBACK wnd_proc(HWND wnd, UINT msg, WPARAM wp, LPARAM lp)
         } else if (kind != HIT_NONE) {
             BOOL inRow = kind == HIT_SCREEN && PtInRect(&g_screenRow[index], pt);
             RECT r = inRow ? g_screenRow[index] : kind == HIT_SCREEN ? g_screens[index].draw : g_devices[index].draw;
-            POINT at = { inRow ? r.right - S(128) : kind == HIT_SCREEN ? r.left : r.right - S(144),
+            POINT at = { inRow ? r.right - S(128) : r.left,
                          r.bottom - (kind == HIT_SCREEN && !inRow ? 0 : S(inRow ? 5 : 8)) };
             ClientToScreen(wnd, &at);
             choose_seat(kind, index, at);
@@ -1524,7 +1569,7 @@ static LRESULT CALLBACK wnd_proc(HWND wnd, UINT msg, WPARAM wp, LPARAM lp)
             InvalidateRect(wnd, &g_rcScreens, FALSE);
             return 0;
         }
-        g_scroll -= GET_WHEEL_DELTA_WPARAM(wp) * S(ROW_H) / WHEEL_DELTA;
+        g_scroll -= GET_WHEEL_DELTA_WPARAM(wp) * (S(TILE_H) + S(TILE_GAP)) / WHEEL_DELTA;
         layout();
         InvalidateRect(wnd, &g_rcDevices, FALSE);
         return 0;
@@ -1544,7 +1589,7 @@ static LRESULT CALLBACK wnd_proc(HWND wnd, UINT msg, WPARAM wp, LPARAM lp)
             else any = TRUE;
         }
         if (!any) KillTimer(wnd, 1);
-        InvalidateRect(wnd, &g_rcDevices, FALSE);
+        InvalidateRect(wnd, &g_rcDevices, FALSE); /* redraw: the device in use blinks */
         return 0;
     }
     case WM_COMMAND: {

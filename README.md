@@ -209,6 +209,25 @@ A small window shows each workplace's state. **Stop** (or Ctrl+Alt+Shift+S on
 workplace 1's keyboard) ends the extra workplaces; their programs keep running
 and come back at the next start.
 
+### The PC's desktop on every screen
+
+Windows shows its desktop icons only on the main screen. When a workplace is
+started, VISION gives its screen a desktop with the same icons: This PC, the
+user's desktop and the shared (Public) desktop. Icons added or removed on the
+PC's desktop appear on every workplace. Double-clicking an icon opens it on
+that workplace's screen, where it stays.
+
+![The PC's desktop icons on workplace 2's screen](docs/windows-desktop.png)
+
+### Device portal
+
+Every keyboard and mouse is shown as an icon tile in its workplace's colour,
+with the workplace and screen it belongs to. A device only works on its own
+workplace's screen. Click a tile to move the device to another workplace and
+screen. The device in use blinks, so it is easy to spot.
+
+![Device portal](docs/windows-devices.png)
+
 ### Starting workplaces one by one
 
 Every workplace card has its own **Start** button. It starts only that
