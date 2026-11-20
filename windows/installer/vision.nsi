@@ -4,7 +4,12 @@ Unicode true
 !include "x64.nsh"
 
 !define APP "VISION"
-!define VERSION "1.0.0"
+!ifndef VERSION
+  !define VERSION "0.0.0"
+!endif
+!ifndef VERSION4
+  !define VERSION4 "0.0.0.0"
+!endif
 !define UNINST_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\VISION"
 
 Name "${APP}"
@@ -14,7 +19,7 @@ RequestExecutionLevel admin
 SetCompressor /SOLID lzma
 BrandingText "VISION ${VERSION}"
 
-VIProductVersion "1.0.0.0"
+VIProductVersion "${VERSION4}"
 VIAddVersionKey "ProductName" "VISION"
 VIAddVersionKey "FileDescription" "VISION Setup"
 VIAddVersionKey "FileVersion" "${VERSION}"

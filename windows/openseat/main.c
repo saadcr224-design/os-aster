@@ -10,6 +10,8 @@
 
 #include "common.h"
 #include "resource.h"
+#include "update.h"
+#include "version.h"
 
 #include <windowsx.h>
 #include <commctrl.h>
@@ -24,7 +26,7 @@ int run_agent(HINSTANCE inst, BOOL test);
 int run_keep_apart(HINSTANCE inst, BOOL test, BOOL automatic);
 
 enum { ID_ADD = 101, ID_REMOVE, /* not 1 or 2: Enter and Esc send IDOK (1) and IDCANCEL (2) */ ID_FIND, ID_REFRESH, ID_SAVE, ID_START, ID_SHARING, ID_AUTO, ID_SETUPS, ID_MENU_SEAT = 1000, ID_MENU_NONE = 1099 };
-enum { HIT_NONE, HIT_SCREEN, HIT_DEVICE, HIT_SEAT, HIT_IDLE, HIT_SEAT_START };
+enum { HIT_NONE, HIT_SCREEN, HIT_DEVICE, HIT_SEAT, HIT_IDLE, HIT_SEAT_START, HIT_UPDATE };
 
 static const COLORREF SEAT_COLORS[MAX_SEATS] = {
     RGB(37, 99, 205), RGB(214, 110, 20), RGB(34, 139, 84),  RGB(140, 72, 190), RGB(200, 50, 80),
@@ -49,7 +51,12 @@ static HWND g_wnd, g_btnAdd, g_btnRemove, g_btnFind, g_btnRefresh, g_btnSave, g_
 static RECT g_startPill[MAX_SEATS];
 static DWORD g_startAt[MAX_SEATS];          /* when Start was pressed, to tell "Starting" from "Error" */
 static WCHAR g_startError[MAX_SEATS][200];  /* why the last Start was refused */
-static BOOL g_savedOk;                      /* show the green "Setup saved successfully" message */
+static BOOL g_savedOk;
+/* Updates: none, available, downloading, installing, failed */
+enum { UP_NONE, UP_FOUND, UP_DOWNLOADING, UP_INSTALLING, UP_FAILED };
+static int g_update, g_updatePct;
+static WCHAR g_updateWhy[200];
+static RECT g_rcNote;                      /* show the green "Setup saved successfully" message */
 /* Automatic setup: which workplace is being asked for which device. */
 static int g_wizSeat = -1, g_wizKind;
 static HWND g_wizPrompt;
@@ -583,9 +590,34 @@ static void paint(HDC dc)
     RECT sub = { S(82), S(46), rc.right - S(20), S(70) };
     text(dc, g_fTitle, COL_TEXT, title, DT_VCENTER | DT_SINGLELINE, g_demo ? L"VISION  \x00B7  Set up workplaces  (demo)" : L"VISION  \x00B7  Set up workplaces");
     text(dc, g_fText, COL_MUTED, sub, DT_SINGLELINE | DT_END_ELLIPSIS,
-         L"Several people can share this PC. Give each person a screen, a keyboard and a mouse.");
+         L"Several people can share this PC. Give each person a screen, a keyboard and a mouse.   \x00B7   Version " TEXT(VISION_VERSION));
 
     RECT note = { 0, S(78), rc.right, S(110) };
+    g_rcNote = note;
+    if (g_update != UP_NONE) {
+        const UpdateInfo *u = update_found();
+        WCHAR line[500];
+        BOOL bad = g_update == UP_FAILED, hover = g_hoverKind == HIT_UPDATE;
+        COLORREF bg = bad ? RGB(253, 228, 228) : hover && g_update == UP_FOUND ? RGB(196, 236, 208) : RGB(214, 243, 222);
+        fill(dc, &note, bg);
+        if (g_update == UP_FOUND)
+            _snwprintf(line, 500, L"\x2191  Update available: VISION %hs (you have %hs).%ls%ls   Click here to update.", u->version,
+                       VISION_VERSION, u->notes[0] ? L"  " : L"", u->notes);
+        else if (g_update == UP_DOWNLOADING)
+            _snwprintf(line, 500, L"Downloading the update\x2026 %d%%   VISION restarts by itself when it is ready.", g_updatePct);
+        else if (g_update == UP_INSTALLING)
+            _snwprintf(line, 500, L"Installing the update. VISION closes now and opens again in a moment\x2026");
+        else
+            _snwprintf(line, 500, L"The update did not work: %ls. Click here to try again.", g_updateWhy);
+        line[499] = 0;
+        if (g_update == UP_DOWNLOADING) { /* progress bar along the bottom of the strip */
+            RECT bar = { 0, note.bottom - S(4), MulDiv(rc.right, g_updatePct, 100), note.bottom };
+            fill(dc, &bar, COL_OK);
+        }
+        RECT t = { S(20), note.top, rc.right - S(20), note.bottom };
+        text(dc, g_fBold, bad ? RGB(160, 30, 30) : RGB(20, 100, 50), t, DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS, line);
+        goto after_note;
+    }
     fill(dc, &note, COL_NOTE_BG);
     RECT noteText = { S(20), S(78), rc.right - S(20), S(110) };
     text(dc, g_fText, COL_NOTE_TX, noteText, DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS,
@@ -593,6 +625,7 @@ static void paint(HDC dc)
          : is_server_os() ? L"Windows Server: every workplace gets its own Windows sign-in on this PC, like a separate PC. It starts with Windows."
                           : L"Windows 10/11: workplaces share one Windows sign-in; VISION keeps each one's windows and mouse on its own screen.");
 
+after_note:
     paint_screens(dc);
     paint_devices(dc);
     paint_seats(dc);
@@ -609,6 +642,7 @@ static void paint(HDC dc)
 
 static int hit_test(POINT pt, int *index)
 {
+    if ((g_update == UP_FOUND || g_update == UP_FAILED) && PtInRect(&g_rcNote, pt)) { *index = 0; return HIT_UPDATE; }
     BOOL inList = pt.y >= g_rcScreens.top + S(64) && pt.y < g_rcScreens.bottom - S(8); /* rows scrolled out of view do not count */
     for (int i = 0; i < g_idleCount; i++)
         if (inList && PtInRect(&g_idleRow[i], pt)) { *index = i; return HIT_IDLE; }
@@ -1426,6 +1460,22 @@ static void refresh_hardware(BOOL automatic)
     InvalidateRect(g_wnd, NULL, FALSE);
 }
 
+/* Download and install the update; VISION restarts afterwards. */
+static void start_update(void)
+{
+    if (g_dirty) {
+        int answer = MessageBoxW(g_wnd, L"VISION restarts to update. Save your changes first?", L"VISION",
+                                 MB_YESNOCANCEL | MB_ICONQUESTION);
+        if (answer == IDCANCEL) return;
+        if (answer == IDYES && !save_all()) { MessageBoxW(g_wnd, L"The setup could not be saved.", L"VISION", MB_OK | MB_ICONERROR); return; }
+        if (answer == IDNO) g_dirty = FALSE;
+    }
+    g_update = UP_DOWNLOADING;
+    g_updatePct = 0;
+    InvalidateRect(g_wnd, NULL, FALSE);
+    update_download(g_wnd);
+}
+
 static HFONT make_font(int points, int weight)
 {
     LOGFONTW lf = { 0 };
@@ -1459,10 +1509,18 @@ static LRESULT CALLBACK wnd_proc(HWND wnd, UINT msg, WPARAM wp, LPARAM lp)
         g_fSmall = make_font(9, FW_NORMAL);
         g_fHuge = make_font(26, FW_BOLD);
         g_btnFind = make_button(L"Find a device", ID_FIND, FALSE);
-        g_btnAuto = make_button(L"\x2728  Automatic setup", ID_AUTO, FALSE);
+        g_btnAuto = make_button(L"Automatic setup", ID_AUTO, FALSE);
         g_btnSetups = make_button(L"Saved setups", ID_SETUPS, FALSE);
         SetTimer(wnd, 4, 700, NULL); /* keep each workplace's status up to date */
-        if (!g_demo) watch_devices();
+        if (!g_demo) {
+            watch_devices();
+            update_check(wnd);                       /* look for a newer VISION now ... */
+            SetTimer(wnd, 5, 6 * 60 * 60 * 1000, NULL); /* ... and every six hours */
+            /* Carry on with workplaces that were running before (e.g. after an update). */
+            BOOL wanted = FALSE;
+            for (int s = 0; s < g_seatCount; s++) wanted |= want_running(s);
+            if (wanted && !is_server_os() && !engine_running()) launch_engine();
+        }
         g_btnRefresh = make_button(L"Refresh", ID_REFRESH, FALSE);
         g_btnSave = make_button(L"Save setup", ID_SAVE, FALSE); /* not the default button: Enter must not save by accident */
         g_btnAdd = make_button(L"Add a workplace", ID_ADD, FALSE);
@@ -1527,7 +1585,7 @@ static LRESULT CALLBACK wnd_proc(HWND wnd, UINT msg, WPARAM wp, LPARAM lp)
         InvalidateRect(wnd, NULL, FALSE);
         return 0;
     case WM_SETCURSOR:
-        if (LOWORD(lp) == HTCLIENT && (HWND)wp == wnd && g_hoverKind != HIT_NONE) {
+        if (LOWORD(lp) == HTCLIENT && (HWND)wp == wnd && g_hoverKind != HIT_NONE && !(g_hoverKind == HIT_UPDATE && g_update != UP_FOUND && g_update != UP_FAILED)) {
             SetCursor(LoadCursorW(NULL, IDC_HAND));
             return TRUE;
         }
@@ -1535,6 +1593,7 @@ static LRESULT CALLBACK wnd_proc(HWND wnd, UINT msg, WPARAM wp, LPARAM lp)
     case WM_LBUTTONUP: {
         POINT pt = { GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
         int index, kind = hit_test(pt, &index);
+        if (kind == HIT_UPDATE) { start_update(); return 0; }
         if (kind == HIT_SEAT_START) {
             WCHAR why[200];
             int state = seat_state(index, why, 200);
@@ -1583,6 +1642,7 @@ static LRESULT CALLBACK wnd_proc(HWND wnd, UINT msg, WPARAM wp, LPARAM lp)
         if (wp == 2) { demo_find_tick(); return 0; }
         if (wp == 3) { KillTimer(wnd, 3); if (!g_demo) refresh_hardware(TRUE); return 0; }
         if (wp == 4) { InvalidateRect(wnd, &g_rcSeats, FALSE); return 0; }
+        if (wp == 5) { if (g_update == UP_NONE) update_check(wnd); return 0; }
         for (int i = 0; i < g_deviceCount; i++) {
             if (!g_devices[i].flashUntil) continue;
             if ((int)(g_devices[i].flashUntil - now) <= 0) g_devices[i].flashUntil = 0;
@@ -1647,6 +1707,31 @@ static LRESULT CALLBACK wnd_proc(HWND wnd, UINT msg, WPARAM wp, LPARAM lp)
          * several of these in a row, so wait a moment and look once. */
         if (msg == WM_DISPLAYCHANGE || wp == DBT_DEVNODES_CHANGED) SetTimer(wnd, 3, 900, NULL);
         break;
+    case WM_UPDATE_FOUND:
+        if (g_update == UP_NONE || g_update == UP_FAILED) { g_update = UP_FOUND; InvalidateRect(wnd, NULL, FALSE); }
+        return 0;
+    case WM_UPDATE_PROGRESS:
+        g_updatePct = (int)wp;
+        InvalidateRect(wnd, &g_rcNote, FALSE);
+        return 0;
+    case WM_UPDATE_FAILED:
+        g_update = UP_FAILED;
+        lstrcpynW(g_updateWhy, (const WCHAR *)wp, 200);
+        InvalidateRect(wnd, NULL, FALSE);
+        return 0;
+    case WM_UPDATE_READY:
+        g_update = UP_INSTALLING;
+        InvalidateRect(wnd, NULL, FALSE);
+        UpdateWindow(wnd);
+        if (update_run((const WCHAR *)wp)) {
+            DestroyWindow(wnd); /* the setup replaces VISION and opens it again */
+        } else {
+            g_update = UP_FAILED;
+            lstrcpynW(g_updateWhy, GetLastError() == ERROR_CANCELLED ? L"Windows was not allowed to install it"
+                                                                      : L"the setup could not be started", 200);
+            InvalidateRect(wnd, NULL, FALSE);
+        }
+        return 0;
     case WM_CLOSE:
         if (confirm_close()) DestroyWindow(wnd);
         return 0;
@@ -1661,6 +1746,7 @@ int WINAPI wWinMain(HINSTANCE inst, HINSTANCE prev, PWSTR cmd, int show)
 {
     (void)prev;
     BOOL test = cmd && wcsstr(cmd, L"--test") != NULL;
+    if (cmd && wcsstr(cmd, L"--relaunch")) return update_relaunch(cmd);
     if (cmd && wcsstr(cmd, L"--agent")) return run_agent(inst, test);
     if (cmd && wcsstr(cmd, L"--start")) return run_controller(inst, test, wcsstr(cmd, L"--auto") != NULL);
     if (cmd && wcsstr(cmd, L"--keep-apart")) return run_keep_apart(inst, test, wcsstr(cmd, L"--auto") != NULL);

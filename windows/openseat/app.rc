@@ -1,11 +1,12 @@
 #include <windows.h>
 #include "resource.h"
+#include "version.h"
 1 ICON "brand/vision.ico"
 1 24 "app.manifest"
 
 VS_VERSION_INFO VERSIONINFO
-FILEVERSION 1,0,0,0
-PRODUCTVERSION 1,0,0,0
+FILEVERSION VISION_VERSION_RC
+PRODUCTVERSION VISION_VERSION_RC
 FILEOS VOS_NT_WINDOWS32
 FILETYPE VFT_APP
 BEGIN
@@ -15,8 +16,8 @@ BEGIN
     BEGIN
       VALUE "FileDescription", "VISION - several workplaces on one PC"
       VALUE "ProductName", "VISION"
-      VALUE "FileVersion", "1.0.0"
-      VALUE "ProductVersion", "1.0.0"
+      VALUE "FileVersion", VISION_VERSION
+      VALUE "ProductVersion", VISION_VERSION
       VALUE "LegalCopyright", "MIT License"
       VALUE "OriginalFilename", "VISION.exe"
     END

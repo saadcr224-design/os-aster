@@ -209,6 +209,22 @@ A small window shows each workplace's state. **Stop** (or Ctrl+Alt+Shift+S on
 workplace 1's keyboard) ends the extra workplaces; their programs keep running
 and come back at the next start.
 
+### Updates
+
+VISION checks for a newer version when it opens and every six hours, by
+reading `version.txt` from its update address (by default the `download`
+folder of this project's website). When there is one, a green bar says
+"Update available". Clicking it downloads the new setup, checks it against
+the SHA-256 in `version.txt`, installs it (Windows asks for administrator
+permission once) and opens VISION again; workplaces that were running carry
+on.
+
+To publish an update: raise `VISION_VERSION` and `VISION_VERSION_RC` in
+`windows/openseat/version.h`, run `windows/release.sh "what is new"`, and
+push. The update address only works once the website is public (GitHub
+Pages); a company can point VISION elsewhere with the registry value
+`HKEY_CURRENT_USER\Software\VISION\UpdateUrl`.
+
 ### The PC's desktop on every screen
 
 Windows shows its desktop icons only on the main screen. When a workplace is
