@@ -6,6 +6,7 @@
 #define WM_UPDATE_PROGRESS (WM_APP + 41)
 #define WM_UPDATE_READY (WM_APP + 42)
 #define WM_UPDATE_FAILED (WM_APP + 43)
+#define WM_UPDATE_NONE (WM_APP + 44)   /* wParam: 0 up to date, 1 could not check */
 
 typedef struct {
     char version[32];

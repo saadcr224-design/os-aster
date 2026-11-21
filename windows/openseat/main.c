@@ -25,7 +25,7 @@ int run_controller(HINSTANCE inst, BOOL test, BOOL automatic);
 int run_agent(HINSTANCE inst, BOOL test);
 int run_keep_apart(HINSTANCE inst, BOOL test, BOOL automatic);
 
-enum { ID_ADD = 101, ID_REMOVE, /* not 1 or 2: Enter and Esc send IDOK (1) and IDCANCEL (2) */ ID_FIND, ID_REFRESH, ID_SAVE, ID_START, ID_SHARING, ID_AUTO, ID_SETUPS, ID_MENU_SEAT = 1000, ID_MENU_NONE = 1099 };
+enum { ID_ADD = 101, ID_REMOVE, /* not 1 or 2: Enter and Esc send IDOK (1) and IDCANCEL (2) */ ID_FIND, ID_REFRESH, ID_SAVE, ID_START, ID_SHARING, ID_AUTO, ID_SETUPS, ID_UPDATE, ID_MENU_SEAT = 1000, ID_MENU_NONE = 1099 };
 enum { HIT_NONE, HIT_SCREEN, HIT_DEVICE, HIT_SEAT, HIT_IDLE, HIT_SEAT_START, HIT_UPDATE };
 
 static const COLORREF SEAT_COLORS[MAX_SEATS] = {
@@ -46,7 +46,7 @@ static const COLORREF SEAT_COLORS[MAX_SEATS] = {
 
 static BOOL g_dirty, g_finding;
 static int g_dpi = 96;
-static HWND g_wnd, g_btnAdd, g_btnRemove, g_btnFind, g_btnRefresh, g_btnSave, g_btnStart, g_btnSharing, g_btnAuto, g_btnSetups;
+static HWND g_wnd, g_btnAdd, g_btnRemove, g_btnFind, g_btnRefresh, g_btnSave, g_btnStart, g_btnSharing, g_btnAuto, g_btnSetups, g_btnUpdate;
 /* Starting workplaces one by one. */
 static RECT g_startPill[MAX_SEATS];
 static DWORD g_startAt[MAX_SEATS];          /* when Start was pressed, to tell "Starting" from "Error" */
@@ -55,6 +55,8 @@ static BOOL g_savedOk;
 /* Updates: none, available, downloading, installing, failed */
 enum { UP_NONE, UP_FOUND, UP_DOWNLOADING, UP_INSTALLING, UP_FAILED };
 static int g_update, g_updatePct;
+static BOOL g_updateBlink, g_checkingByHand;
+static void update_button(void);
 static WCHAR g_updateWhy[200];
 static RECT g_rcNote;                      /* show the green "Setup saved successfully" message */
 /* Automatic setup: which workplace is being asked for which device. */
@@ -190,6 +192,7 @@ static void layout(void)
 
     int by = rc.bottom - barH + S(14), bh = S(32);
     MoveWindow(g_btnAuto, rc.right - margin - S(200), S(20), S(200), S(38), TRUE);
+    MoveWindow(g_btnUpdate, rc.right - margin - S(200) - S(10) - S(190), S(20), S(190), S(38), TRUE);
     MoveWindow(g_btnSetups, rc.right - margin - S(132), top - S(2), S(132), S(28), TRUE);
     MoveWindow(g_btnFind, margin, by, S(130), bh, TRUE);
     MoveWindow(g_btnRefresh, margin + S(140), by, S(90), bh, TRUE);
@@ -587,10 +590,10 @@ static void paint(HDC dc)
     if (!logo) logo = LoadImageW(GetModuleHandleW(NULL), MAKEINTRESOURCEW(1), IMAGE_ICON, S(52), S(52), 0);
     if (logo) DrawIconEx(dc, S(18), S(13), logo, S(52), S(52), 0, NULL, DI_NORMAL);
     RECT title = { S(82), S(10), rc.right - S(20), S(44) };
-    RECT sub = { S(82), S(46), rc.right - S(20), S(70) };
+    RECT sub = { S(82), S(46), rc.right - S(430), S(70) }; /* stop before the two buttons on the right */
     text(dc, g_fTitle, COL_TEXT, title, DT_VCENTER | DT_SINGLELINE, g_demo ? L"VISION  \x00B7  Set up workplaces  (demo)" : L"VISION  \x00B7  Set up workplaces");
     text(dc, g_fText, COL_MUTED, sub, DT_SINGLELINE | DT_END_ELLIPSIS,
-         L"Several people can share this PC. Give each person a screen, a keyboard and a mouse.   \x00B7   Version " TEXT(VISION_VERSION));
+         L"Version " TEXT(VISION_VERSION) L"   \x00B7   Several people share this PC: each one gets a screen, a keyboard and a mouse.");
 
     RECT note = { 0, S(78), rc.right, S(110) };
     g_rcNote = note;
@@ -598,7 +601,9 @@ static void paint(HDC dc)
         const UpdateInfo *u = update_found();
         WCHAR line[500];
         BOOL bad = g_update == UP_FAILED, hover = g_hoverKind == HIT_UPDATE;
-        COLORREF bg = bad ? RGB(253, 228, 228) : hover && g_update == UP_FOUND ? RGB(196, 236, 208) : RGB(214, 243, 222);
+        COLORREF bg = bad ? RGB(253, 228, 228)
+                    : g_update == UP_FOUND && g_updateBlink ? RGB(30, 150, 80)   /* blinks until clicked */
+                    : hover && g_update == UP_FOUND ? RGB(196, 236, 208) : RGB(214, 243, 222);
         fill(dc, &note, bg);
         if (g_update == UP_FOUND)
             _snwprintf(line, 500, L"\x2191  Update available: VISION %hs (you have %hs).%ls%ls   Click here to update.", u->version,
@@ -615,7 +620,8 @@ static void paint(HDC dc)
             fill(dc, &bar, COL_OK);
         }
         RECT t = { S(20), note.top, rc.right - S(20), note.bottom };
-        text(dc, g_fBold, bad ? RGB(160, 30, 30) : RGB(20, 100, 50), t, DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS, line);
+        text(dc, g_fBold, bad ? RGB(160, 30, 30) : g_update == UP_FOUND && g_updateBlink ? RGB(255, 255, 255) : RGB(20, 100, 50), t,
+             DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS, line);
         goto after_note;
     }
     fill(dc, &note, COL_NOTE_BG);
@@ -1472,8 +1478,23 @@ static void start_update(void)
     }
     g_update = UP_DOWNLOADING;
     g_updatePct = 0;
+    g_updateBlink = FALSE;
+    update_button();
     InvalidateRect(g_wnd, NULL, FALSE);
     update_download(g_wnd);
+}
+
+static void update_button(void)
+{
+    const UpdateInfo *u = update_found();
+    WCHAR label[80];
+    if (g_update == UP_FOUND && u) _snwprintf(label, 80, L"%ls Update to %hs", g_updateBlink ? L"\x25CF" : L"\x25CB", u->version);
+    else if (g_update == UP_DOWNLOADING || g_update == UP_INSTALLING) lstrcpynW(label, L"Updating\x2026", 80);
+    else if (g_checkingByHand) lstrcpynW(label, L"Checking\x2026", 80);
+    else lstrcpynW(label, L"Check for updates", 80);
+    label[79] = 0;
+    SetWindowTextW(g_btnUpdate, label);
+    EnableWindow(g_btnUpdate, !g_demo && g_update != UP_DOWNLOADING && g_update != UP_INSTALLING && !g_checkingByHand);
 }
 
 static HFONT make_font(int points, int weight)
@@ -1510,6 +1531,7 @@ static LRESULT CALLBACK wnd_proc(HWND wnd, UINT msg, WPARAM wp, LPARAM lp)
         g_fHuge = make_font(26, FW_BOLD);
         g_btnFind = make_button(L"Find a device", ID_FIND, FALSE);
         g_btnAuto = make_button(L"Automatic setup", ID_AUTO, FALSE);
+        g_btnUpdate = make_button(L"Check for updates", ID_UPDATE, FALSE);
         g_btnSetups = make_button(L"Saved setups", ID_SETUPS, FALSE);
         SetTimer(wnd, 4, 700, NULL); /* keep each workplace's status up to date */
         if (!g_demo) {
@@ -1643,6 +1665,13 @@ static LRESULT CALLBACK wnd_proc(HWND wnd, UINT msg, WPARAM wp, LPARAM lp)
         if (wp == 3) { KillTimer(wnd, 3); if (!g_demo) refresh_hardware(TRUE); return 0; }
         if (wp == 4) { InvalidateRect(wnd, &g_rcSeats, FALSE); return 0; }
         if (wp == 5) { if (g_update == UP_NONE) update_check(wnd); return 0; }
+        if (wp == 6) {
+            if (g_update != UP_FOUND) { KillTimer(wnd, 6); g_updateBlink = FALSE; update_button(); return 0; }
+            g_updateBlink = !g_updateBlink;
+            update_button();
+            InvalidateRect(wnd, &g_rcNote, FALSE);
+            return 0;
+        }
         for (int i = 0; i < g_deviceCount; i++) {
             if (!g_devices[i].flashUntil) continue;
             if ((int)(g_devices[i].flashUntil - now) <= 0) g_devices[i].flashUntil = 0;
@@ -1669,6 +1698,10 @@ static LRESULT CALLBACK wnd_proc(HWND wnd, UINT msg, WPARAM wp, LPARAM lp)
             return 0;
         case ID_REMOVE:
             remove_last_seat();
+            return 0;
+        case ID_UPDATE:
+            if (g_update == UP_FOUND || g_update == UP_FAILED) { start_update(); update_button(); }
+            else if (g_update == UP_NONE) { g_checkingByHand = TRUE; update_button(); update_check(wnd); }
             return 0;
         case ID_AUTO:
             wizard_start();
@@ -1708,7 +1741,21 @@ static LRESULT CALLBACK wnd_proc(HWND wnd, UINT msg, WPARAM wp, LPARAM lp)
         if (msg == WM_DISPLAYCHANGE || wp == DBT_DEVNODES_CHANGED) SetTimer(wnd, 3, 900, NULL);
         break;
     case WM_UPDATE_FOUND:
-        if (g_update == UP_NONE || g_update == UP_FAILED) { g_update = UP_FOUND; InvalidateRect(wnd, NULL, FALSE); }
+        g_checkingByHand = FALSE;
+        if (g_update == UP_NONE || g_update == UP_FAILED) {
+            g_update = UP_FOUND;
+            SetTimer(wnd, 6, 600, NULL); /* blink the update bar and button */
+            InvalidateRect(wnd, NULL, FALSE);
+        }
+        update_button();
+        return 0;
+    case WM_UPDATE_NONE:
+        if (g_checkingByHand) {
+            g_checkingByHand = FALSE;
+            set_status(wp ? L"Could not reach the update site. Check the internet connection and try again."
+                          : L"VISION is up to date (version " TEXT(VISION_VERSION) L").");
+        }
+        update_button();
         return 0;
     case WM_UPDATE_PROGRESS:
         g_updatePct = (int)wp;
@@ -1716,6 +1763,7 @@ static LRESULT CALLBACK wnd_proc(HWND wnd, UINT msg, WPARAM wp, LPARAM lp)
         return 0;
     case WM_UPDATE_FAILED:
         g_update = UP_FAILED;
+        update_button();
         lstrcpynW(g_updateWhy, (const WCHAR *)wp, 200);
         InvalidateRect(wnd, NULL, FALSE);
         return 0;

@@ -1,4 +1,4 @@
-version=1.1.1
+version=1.1.2
 file=VISION-Setup.exe
-sha256=5b7453d3a2e177bceb635861056b00c132114654bcd7480c0807d60c9c1d6be0
-notes=Switched-on workplaces start by themselves; a workplace runs even before it has its own keyboard and mouse.
+sha256=86e1626dd8bea733ffd17f15574c3b354eb8dd336dc227fdeb239452ff7b02e2
+notes=New Check for updates button; available updates blink.

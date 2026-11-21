@@ -137,13 +137,16 @@ static DWORD WINAPI check_thread(LPVOID unused)
     wcscat(url, L"version.txt");
     UpdateInfo *info = calloc(1, sizeof(UpdateInfo));
     if (!info) return 0;
+    BOOL found = FALSE, reached = FALSE;
     if (fetch(url, &data, &size, FALSE, why, 200)) {
+        reached = TRUE;
         char *text = malloc(size + 1);
         if (text) {
             memcpy(text, data, size);
             text[size] = 0;
             if (parse(text, info) && compare_versions(info->version, VISION_VERSION) > 0) {
                 g_found = *info;
+                found = TRUE;
                 PostMessageW(g_notify, WM_UPDATE_FOUND, 0, 0);
             }
             free(text);
@@ -151,6 +154,7 @@ static DWORD WINAPI check_thread(LPVOID unused)
         free(data);
     }
     free(info);
+    if (!found) PostMessageW(g_notify, WM_UPDATE_NONE, reached ? 0 : 1, 0);
     return 0;
 }
 

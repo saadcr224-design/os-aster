@@ -213,8 +213,9 @@ and come back at the next start.
 
 VISION checks for a newer version when it opens and every six hours, by
 reading `version.txt` from its update address (by default the `download`
-folder of this project's website). When there is one, a green bar says
-"Update available". Clicking it downloads the new setup, checks it against
+folder of this project's website), and on demand with **Check for updates**
+(top right). When there is one, the green "Update available" bar and the
+button ("Update to …") blink until clicked. Clicking it downloads the new setup, checks it against
 the SHA-256 in `version.txt`, installs it (Windows asks for administrator
 permission once) and opens VISION again; workplaces that were running carry
 on.
