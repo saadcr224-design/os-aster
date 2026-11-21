@@ -89,6 +89,7 @@ void describe_snapshot(int id, WCHAR *out, size_t chars);
 enum { WS_NOT_STARTED, WS_STARTING, WS_RUNNING, WS_ERROR };
 BOOL want_running(int seat);
 void set_want_running(int seat, BOOL on);
+void forget_running(int seat); /* back to the default: runs when switched on */
 void report_status(int seat, int state, const WCHAR *detail);
 int read_status(int seat, WCHAR *detail, size_t chars);
 BOOL seat_problem(int seat, WCHAR *out, size_t chars); /* why it cannot start, if anything */

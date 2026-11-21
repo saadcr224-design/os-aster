@@ -833,7 +833,20 @@ BOOL want_running(int seat)
     WCHAR path[MAX_PATH], key[24];
     state_file(L"running.ini", path);
     _snwprintf(key, 24, L"Workplace%d", seat + 1);
-    return GetPrivateProfileIntW(L"Running", key, 0, path) != 0;
+    int v = (int)GetPrivateProfileIntW(L"Running", key, -1, path);
+    if (v == 1) return TRUE;
+    if (v == 0) return FALSE; /* stopped by hand: stays stopped until Start */
+    /* Never started or stopped by hand: every switched-on workplace with a
+     * screen runs by itself, at Windows start and when VISION starts. */
+    return seat >= 0 && seat < g_seatCount && (seat == 0 || (g_share[seat] & SHARE_ON)) && seat_first_screen(seat) >= 0;
+}
+
+void forget_running(int seat)
+{
+    WCHAR path[MAX_PATH], key[24];
+    state_file(L"running.ini", path);
+    _snwprintf(key, 24, L"Workplace%d", seat + 1);
+    WritePrivateProfileStringW(L"Running", key, NULL, path);
 }
 
 void set_want_running(int seat, BOOL on)
@@ -841,7 +854,7 @@ void set_want_running(int seat, BOOL on)
     WCHAR path[MAX_PATH], key[24];
     state_file(L"running.ini", path);
     _snwprintf(key, 24, L"Workplace%d", seat + 1);
-    WritePrivateProfileStringW(L"Running", key, on ? L"1" : NULL, path);
+    WritePrivateProfileStringW(L"Running", key, on ? L"1" : L"0", path);
 }
 
 void report_status(int seat, int state, const WCHAR *detail)
@@ -876,8 +889,8 @@ BOOL seat_problem(int seat, WCHAR *out, size_t chars)
     if (seat < 0 || seat >= g_seatCount) _snwprintf(out, chars, L"This workplace no longer exists.");
     else if (seat_first_screen(seat) < 0) _snwprintf(out, chars, L"It has no screen. Give it one in the screen list.");
     else if (seat > 0 && !(g_share[seat] & SHARE_ON)) _snwprintf(out, chars, L"It is switched off in its settings.");
-    else if (seat > 0 && (!seat_has(seat, DEV_KEYBOARD) || !seat_has(seat, DEV_MOUSE)))
-        _snwprintf(out, chars, L"It needs its own keyboard and mouse. Choose them in the list.");
+    /* A missing keyboard or mouse does not stop it: its screen, desktop and
+     * windows run, and the devices can be given to it at any time. */
     out[chars - 1] = 0;
     return out[0] != 0;
 }

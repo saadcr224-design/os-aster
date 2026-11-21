@@ -778,7 +778,7 @@ static void remove_last_seat(void)
     for (int i = 0; i < g_deviceCount; i++) if (g_devices[i].seat == last) g_devices[i].seat = 0;
     g_share[last] = SHARE_DEFAULT;
     g_names[last][0] = 0;
-    if (want_running(last)) set_want_running(last, FALSE); /* a removed workplace stops */
+    forget_running(last); /* a removed workplace stops; a new one later starts fresh */
     g_startError[last][0] = 0;
     g_seatCount--;
     _snwprintf(g_status, 300, L"Workplace %d removed. Its screens and devices went back to Workplace 1.", last + 1);
@@ -1018,7 +1018,7 @@ static INT_PTR CALLBACK sharing_proc(HWND dlg, UINT msg, WPARAM wp, LPARAM lp)
         WCHAR folder[MAX_PATH], info[900];
         shared_folder(folder, MAX_PATH);
         _snwprintf(info, 900,
-                   L"Switched on: the workplace starts when you press Start workplaces.\r\n\r\n"
+                   L"Switched on: the workplace starts by itself, with VISION and every time Windows starts.\r\n\r\n"
                    L"Copy and paste: text copied there can be pasted in Workplace 1, and the other way round.\r\n\r\n"
                    L"Shared folder: the workplace can open %ls. Put files there to pass them on.\r\n\r\n"
                    L"Sound: the workplace can play sound on this PC's speakers.\r\n\r\n"

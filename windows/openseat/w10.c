@@ -592,10 +592,16 @@ static void paint(HWND w, HDC dc)
         for (int i = 0; i < g_winCount; i++) windows += IsWindow(g_win[i].wnd) && g_win[i].seat == s;
         WCHAR label[NAME_CHARS];
         seat_name(s, label, NAME_CHARS);
-        if (!g_live[s]) _snwprintf(line, 200, L"%ls  \x00B7  %ls", label, want_running(s) ? L"cannot start" : L"not started");
+        BOOL ownDevices = s == 0 || (seat_has(s, DEV_KEYBOARD) && seat_has(s, DEV_MOUSE));
+        if (!g_live[s])
+            _snwprintf(line, 200, L"%ls  \x00B7  %ls", label,
+                       s > 0 && !(g_share[s] & SHARE_ON) ? L"switched off in Connections and sharing"
+                       : scr < 0                          ? L"no screen yet: give it one in VISION"
+                                                          : L"stopped: press its Start in VISION");
         else if (scr < 0) _snwprintf(line, 200, L"%ls  \x00B7  no screen", label);
         else _snwprintf(line, 200, L"%ls  \x00B7  screen %d  \x00B7  %d window%ls%ls", label, scr + 1, windows,
-                        windows == 1 ? L"" : L"s", s == g_active ? L"   (working now)" : L"");
+                        windows == 1 ? L"" : L"s",
+                        s == g_active ? L"   (working now)" : !ownDevices ? L"   (no own keyboard and mouse yet)" : L"");
         RECT r = { S(20), y, rc.right - S(20), y + S(22) };
         SetTextColor(dc, s == g_active ? RGB(30, 110, 60) : RGB(28, 32, 38));
         DrawTextW(dc, line, -1, &r, DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
