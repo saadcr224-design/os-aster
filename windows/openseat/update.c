@@ -228,7 +228,7 @@ void update_download(HWND notify)
 
 /* Run the checked setup silently.  A copy of VISION in the temp folder waits
  * for the setup to finish and then opens the new VISION, as the normal user. */
-BOOL update_run(const WCHAR *setup)
+BOOL update_run(const WCHAR *setup, const WCHAR *reopenArgs)
 {
     SHELLEXECUTEINFOW info;
     ZeroMemory(&info, sizeof(info));
@@ -248,7 +248,8 @@ BOOL update_run(const WCHAR *setup)
     GetTempPathW(MAX_PATH, temp);
     _snwprintf(helper, MAX_PATH, L"%lsVISION-restart.exe", temp); /* not "VISION.exe": the setup closes those */
     if (!pid || !CopyFileW(self, helper, FALSE)) return TRUE;  /* updated anyway; open VISION by hand */
-    _snwprintf(cmd, MAX_PATH * 2 + 64, L"\"%ls\" --relaunch %lu \"%ls\"", helper, pid, self);
+    _snwprintf(cmd, MAX_PATH * 2 + 64, L"\"%ls\" --relaunch %lu \"%ls\"%ls%ls", helper, pid, self,
+               reopenArgs && reopenArgs[0] ? L" " : L"", reopenArgs ? reopenArgs : L"");
     STARTUPINFOW si;
     PROCESS_INFORMATION pi;
     ZeroMemory(&si, sizeof(si));
@@ -280,12 +281,31 @@ int update_relaunch(const WCHAR *args)
     Sleep(800);
     STARTUPINFOW si;
     PROCESS_INFORMATION pi;
-    WCHAR cmd[MAX_PATH + 4];
+    WCHAR cmd[MAX_PATH + 80];
     ZeroMemory(&si, sizeof(si));
     si.cb = sizeof(si);
-    _snwprintf(cmd, MAX_PATH + 4, L"\"%ls\"", path);
+    /* anything after the path (e.g. --keep-apart --auto) is passed on */
+    const WCHAR *extra = q ? wcschr(q + 1, L'"') : NULL;
+    extra = extra ? extra + 1 : L"";
+    while (*extra == L' ') extra++;
+    if (wcslen(extra) > 60) extra = L"";
+    _snwprintf(cmd, MAX_PATH + 80, L"\"%ls\"%ls%ls", path, extra[0] ? L" " : L"", extra);
     if (!CreateProcessW(path, cmd, NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi)) return 1;
     CloseHandle(pi.hThread);
     CloseHandle(pi.hProcess);
     return 0;
+}
+
+/* "Update automatically" (on unless switched off). */
+BOOL update_auto(void)
+{
+    DWORD v = 1, size = sizeof(v);
+    if (RegGetValueW(HKEY_CURRENT_USER, L"Software\\VISION", L"AutoUpdate", RRF_RT_REG_DWORD, NULL, &v, &size) != ERROR_SUCCESS) return TRUE;
+    return v != 0;
+}
+
+void update_set_auto(BOOL on)
+{
+    DWORD v = on ? 1 : 0;
+    RegSetKeyValueW(HKEY_CURRENT_USER, L"Software\\VISION", L"AutoUpdate", REG_DWORD, &v, sizeof(v));
 }

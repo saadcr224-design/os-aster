@@ -18,7 +18,9 @@ typedef struct {
 void update_check(HWND notify);           /* in the background; posts WM_UPDATE_FOUND */
 const UpdateInfo *update_found(void);
 void update_download(HWND notify);        /* posts WM_UPDATE_PROGRESS, then READY or FAILED */
-BOOL update_run(const WCHAR *setup);
+BOOL update_run(const WCHAR *setup, const WCHAR *reopenArgs);
+BOOL update_auto(void);
+void update_set_auto(BOOL on);
 int update_relaunch(const WCHAR *args);
 int compare_versions(const char *a, const char *b);
 #endif

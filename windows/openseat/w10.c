@@ -19,6 +19,7 @@
 #include <commctrl.h>
 #include <shellapi.h>
 #include <shlobj.h>
+#include "update.h"
 #include <stdio.h>
 #include <wchar.h>
 
@@ -651,6 +652,7 @@ static LRESULT CALLBACK status_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
         reload_setup(); /* screens moved: keep the seats, update their positions */
         return 0;
     case WM_TIMER: {
+        if (wp == 2) { update_check(w); return 0; }
         FILETIME now = setup_time();
         if (CompareFileTime(&now, &g_setupTime) != 0) reload_setup();
         BOOL before[MAX_SEATS], changedLive = FALSE, anyWanted = FALSE;
@@ -671,6 +673,25 @@ static LRESULT CALLBACK status_proc(HWND w, UINT msg, WPARAM wp, LPARAM lp)
         if (!anyWanted) DestroyWindow(w); /* every workplace was stopped */
         return 0;
     }
+    /* Updates while only this background part runs (the setup window, when
+     * open, handles them itself). */
+    case WM_UPDATE_FOUND:
+        if (update_auto() && !FindWindowW(L"VISIONMain", NULL)) {
+            lstrcpynW(g_note, L"Downloading a VISION update\x2026", 200);
+            InvalidateRect(w, NULL, FALSE);
+            update_download(w);
+        }
+        return 0;
+    case WM_UPDATE_READY:
+        lstrcpynW(g_note, L"Installing the VISION update. The workplaces carry on in a moment.", 200);
+        InvalidateRect(w, NULL, FALSE);
+        UpdateWindow(w);
+        if (update_run((const WCHAR *)wp, L"--keep-apart --auto")) DestroyWindow(w);
+        return 0;
+    case WM_UPDATE_FAILED:
+    case WM_UPDATE_NONE:
+    case WM_UPDATE_PROGRESS:
+        return 0;
     case WM_DESTROY:
         stop_keeping_apart();
         PostQuitMessage(0);
@@ -764,6 +785,10 @@ int run_keep_apart(HINSTANCE inst, BOOL test, BOOL automatic)
     ShowWindow(g_status, automatic ? SW_SHOWMINNOACTIVE : SW_SHOWNORMAL);
     CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
     start_desktops();
+    if (!test) {
+        update_check(g_status);                       /* updates by itself, see WM_UPDATE_FOUND */
+        SetTimer(g_status, 2, 6 * 60 * 60 * 1000, NULL);
+    }
     MSG msg;
     while (GetMessageW(&msg, NULL, 0, 0) > 0) {
         TranslateMessage(&msg);

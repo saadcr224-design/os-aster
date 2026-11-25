@@ -25,7 +25,7 @@ int run_controller(HINSTANCE inst, BOOL test, BOOL automatic);
 int run_agent(HINSTANCE inst, BOOL test);
 int run_keep_apart(HINSTANCE inst, BOOL test, BOOL automatic);
 
-enum { ID_ADD = 101, ID_REMOVE, /* not 1 or 2: Enter and Esc send IDOK (1) and IDCANCEL (2) */ ID_FIND, ID_REFRESH, ID_SAVE, ID_START, ID_SHARING, ID_AUTO, ID_SETUPS, ID_UPDATE, ID_MENU_SEAT = 1000, ID_MENU_NONE = 1099 };
+enum { ID_ADD = 101, ID_REMOVE, /* not 1 or 2: Enter and Esc send IDOK (1) and IDCANCEL (2) */ ID_FIND, ID_REFRESH, ID_SAVE, ID_START, ID_SHARING, ID_AUTO, ID_SETUPS, ID_UPDATE, ID_AUTOUPDATE, ID_MENU_SEAT = 1000, ID_MENU_NONE = 1099 };
 enum { HIT_NONE, HIT_SCREEN, HIT_DEVICE, HIT_SEAT, HIT_IDLE, HIT_SEAT_START, HIT_UPDATE };
 
 static const COLORREF SEAT_COLORS[MAX_SEATS] = {
@@ -46,7 +46,7 @@ static const COLORREF SEAT_COLORS[MAX_SEATS] = {
 
 static BOOL g_dirty, g_finding;
 static int g_dpi = 96;
-static HWND g_wnd, g_btnAdd, g_btnRemove, g_btnFind, g_btnRefresh, g_btnSave, g_btnStart, g_btnSharing, g_btnAuto, g_btnSetups, g_btnUpdate;
+static HWND g_wnd, g_btnAdd, g_btnRemove, g_btnFind, g_btnRefresh, g_btnSave, g_btnStart, g_btnSharing, g_btnAuto, g_btnSetups, g_btnUpdate, g_chkAutoUpdate;
 /* Starting workplaces one by one. */
 static RECT g_startPill[MAX_SEATS];
 static DWORD g_startAt[MAX_SEATS];          /* when Start was pressed, to tell "Starting" from "Error" */
@@ -56,6 +56,7 @@ static BOOL g_savedOk;
 enum { UP_NONE, UP_FOUND, UP_DOWNLOADING, UP_INSTALLING, UP_FAILED };
 static int g_update, g_updatePct;
 static BOOL g_updateBlink, g_checkingByHand;
+static int g_updateCountdown; /* seconds until an automatic update; 0 = none */
 static void update_button(void);
 #define WM_FIRST_RUN (WM_APP + 60)
 static WCHAR g_updateWhy[200];
@@ -193,7 +194,8 @@ static void layout(void)
 
     int by = rc.bottom - barH + S(14), bh = S(32);
     MoveWindow(g_btnAuto, rc.right - margin - S(200), S(20), S(200), S(38), TRUE);
-    MoveWindow(g_btnUpdate, rc.right - margin - S(200) - S(10) - S(190), S(20), S(190), S(38), TRUE);
+    MoveWindow(g_btnUpdate, rc.right - margin - S(200) - S(10) - S(190), S(8), S(190), S(36), TRUE);
+    MoveWindow(g_chkAutoUpdate, rc.right - margin - S(200) - S(10) - S(190), S(48), S(190), S(22), TRUE);
     MoveWindow(g_btnSetups, rc.right - margin - S(132), top - S(2), S(132), S(28), TRUE);
     MoveWindow(g_btnFind, margin, by, S(130), bh, TRUE);
     MoveWindow(g_btnRefresh, margin + S(140), by, S(90), bh, TRUE);
@@ -606,7 +608,10 @@ static void paint(HDC dc)
                     : g_update == UP_FOUND && g_updateBlink ? RGB(30, 150, 80)   /* blinks until clicked */
                     : hover && g_update == UP_FOUND ? RGB(196, 236, 208) : RGB(214, 243, 222);
         fill(dc, &note, bg);
-        if (g_update == UP_FOUND)
+        if (g_update == UP_FOUND && g_updateCountdown > 0)
+            _snwprintf(line, 500, L"\x2191  VISION %hs is here. Updating by itself in %d s\x2026   Click here to update now.",
+                       u->version, g_updateCountdown);
+        else if (g_update == UP_FOUND)
             _snwprintf(line, 500, L"\x2191  Update available: VISION %hs (you have %hs).%ls%ls   Click here to update.", u->version,
                        VISION_VERSION, u->notes[0] ? L"  " : L"", u->notes);
         else if (g_update == UP_DOWNLOADING)
@@ -1479,6 +1484,8 @@ static void start_update(void)
     }
     g_update = UP_DOWNLOADING;
     g_updatePct = 0;
+    g_updateCountdown = 0;
+    KillTimer(g_wnd, 7);
     g_updateBlink = FALSE;
     update_button();
     InvalidateRect(g_wnd, NULL, FALSE);
@@ -1533,6 +1540,10 @@ static LRESULT CALLBACK wnd_proc(HWND wnd, UINT msg, WPARAM wp, LPARAM lp)
         g_btnFind = make_button(L"Find a device", ID_FIND, FALSE);
         g_btnAuto = make_button(L"Automatic setup", ID_AUTO, FALSE);
         g_btnUpdate = make_button(L"Check for updates", ID_UPDATE, FALSE);
+        g_chkAutoUpdate = CreateWindowW(L"BUTTON", L"Update automatically", WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_AUTOCHECKBOX,
+                                        0, 0, 10, 10, wnd, (HMENU)(INT_PTR)ID_AUTOUPDATE, GetModuleHandleW(NULL), NULL);
+        SendMessageW(g_chkAutoUpdate, WM_SETFONT, (WPARAM)g_fSmall, TRUE);
+        SendMessageW(g_chkAutoUpdate, BM_SETCHECK, update_auto() ? BST_CHECKED : BST_UNCHECKED, 0);
         g_btnSetups = make_button(L"Saved setups", ID_SETUPS, FALSE);
         SetTimer(wnd, 4, 700, NULL); /* keep each workplace's status up to date */
         if (!g_demo) {
@@ -1559,7 +1570,9 @@ static LRESULT CALLBACK wnd_proc(HWND wnd, UINT msg, WPARAM wp, LPARAM lp)
             int changes = firstRun ? one_workplace_per_screen() : separate_shared_screens();
             /* First time with several screens: offer to set everything up in one go. */
             if (firstRun && !g_demo && g_screenCount >= 2) PostMessageW(wnd, WM_FIRST_RUN, 0, 0);
-            if (changes) {
+            if (changes && firstRun && !g_demo && save_all()) { /* the starting layout is kept straight away */
+                _snwprintf(g_status, 300, L"Each screen has its own workplace.");
+            } else if (changes) {
                 g_dirty = TRUE;
                 _snwprintf(g_status, 300, L"Each screen has its own workplace. Press Save setup to keep this.");
             }
@@ -1668,8 +1681,16 @@ static LRESULT CALLBACK wnd_proc(HWND wnd, UINT msg, WPARAM wp, LPARAM lp)
         if (wp == 3) { KillTimer(wnd, 3); if (!g_demo) refresh_hardware(TRUE); return 0; }
         if (wp == 4) { InvalidateRect(wnd, &g_rcSeats, FALSE); return 0; }
         if (wp == 5) { if (g_update == UP_NONE) update_check(wnd); return 0; }
+        if (wp == 7) {
+            if (g_update != UP_FOUND || g_dirty) { g_updateCountdown = 0; KillTimer(wnd, 7); InvalidateRect(wnd, &g_rcNote, FALSE); return 0; }
+            if (--g_updateCountdown <= 0) { KillTimer(wnd, 7); start_update(); return 0; }
+            InvalidateRect(wnd, &g_rcNote, FALSE);
+            return 0;
+        }
         if (wp == 6) {
             if (g_update != UP_FOUND) { KillTimer(wnd, 6); g_updateBlink = FALSE; update_button(); return 0; }
+            /* Waiting because of unsaved changes: once saved, update by itself after all. */
+            if (update_auto() && !g_dirty && !g_updateCountdown) { g_updateCountdown = 10; SetTimer(wnd, 7, 1000, NULL); }
             g_updateBlink = !g_updateBlink;
             update_button();
             InvalidateRect(wnd, &g_rcNote, FALSE);
@@ -1702,6 +1723,13 @@ static LRESULT CALLBACK wnd_proc(HWND wnd, UINT msg, WPARAM wp, LPARAM lp)
         case ID_REMOVE:
             remove_last_seat();
             return 0;
+        case ID_AUTOUPDATE: {
+            BOOL on = SendMessageW(g_chkAutoUpdate, BM_GETCHECK, 0, 0) == BST_CHECKED;
+            update_set_auto(on);
+            if (!on && g_updateCountdown) { g_updateCountdown = 0; KillTimer(wnd, 7); InvalidateRect(wnd, &g_rcNote, FALSE); }
+            set_status(on ? L"Updates will install by themselves." : L"Updates wait until you click Update.");
+            return 0;
+        }
         case ID_UPDATE:
             if (g_update == UP_FOUND || g_update == UP_FAILED) { start_update(); update_button(); }
             else if (g_update == UP_NONE) { g_checkingByHand = TRUE; update_button(); update_check(wnd); }
@@ -1760,6 +1788,8 @@ static LRESULT CALLBACK wnd_proc(HWND wnd, UINT msg, WPARAM wp, LPARAM lp)
         if (g_update == UP_NONE || g_update == UP_FAILED) {
             g_update = UP_FOUND;
             SetTimer(wnd, 6, 600, NULL); /* blink the update bar and button */
+            /* Update automatically: count down, unless there are unsaved changes to ask about. */
+            if (update_auto() && !g_dirty) { g_updateCountdown = 10; SetTimer(wnd, 7, 1000, NULL); }
             InvalidateRect(wnd, NULL, FALSE);
         }
         update_button();
@@ -1786,7 +1816,7 @@ static LRESULT CALLBACK wnd_proc(HWND wnd, UINT msg, WPARAM wp, LPARAM lp)
         g_update = UP_INSTALLING;
         InvalidateRect(wnd, NULL, FALSE);
         UpdateWindow(wnd);
-        if (update_run((const WCHAR *)wp)) {
+        if (update_run((const WCHAR *)wp, NULL)) {
             DestroyWindow(wnd); /* the setup replaces VISION and opens it again */
         } else {
             g_update = UP_FAILED;

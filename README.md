@@ -213,6 +213,13 @@ and come back at the next start.
 
 ### Updates
 
+**Updates install by themselves.** With **Update automatically** ticked (the
+default, under the update button), a new version shows a 10-second countdown
+and then installs; if there are unsaved changes, VISION waits until they are
+saved. When only the background part runs (the workplaces, with the setup
+window closed), it updates by itself and carries on. Windows may ask once for
+administrator permission, because VISION lives in Program Files.
+
 VISION checks for a newer version when it opens and every six hours, by
 reading `version.txt` from its update address (by default the `download`
 folder of this project's website), and on demand with **Check for updates**
