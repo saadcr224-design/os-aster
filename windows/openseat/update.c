@@ -21,9 +21,15 @@
 
 static HWND g_notify;
 static UpdateInfo g_found;
+static int g_baseIndex; /* which update address answered */
 
-static void base_url(WCHAR *out, size_t chars)
+static void base_url_n(int n, WCHAR *out, size_t chars);
+static void base_url(WCHAR *out, size_t chars) { base_url_n(g_baseIndex, out, chars); }
+
+/* n = 0: the main address (or the one set for testing / by a company); n = 1: the backup. */
+static void base_url_n(int n, WCHAR *out, size_t chars)
 {
+    if (n == 1) { MultiByteToWideChar(CP_UTF8, 0, VISION_UPDATE_BASE2, -1, out, (int)chars); return; }
     DWORD size = (DWORD)(chars * sizeof(WCHAR));
     /* Test and company setups can point elsewhere. */
     if (GetEnvironmentVariableW(L"VISION_UPDATE_URL", out, (DWORD)chars)) return;
@@ -131,14 +137,17 @@ static DWORD WINAPI check_thread(LPVOID unused)
 {
     (void)unused;
     WCHAR url[2100], why[200];
-    BYTE *data;
+    BYTE *data = NULL;
     DWORD size;
-    base_url(url, 2048);
-    wcscat(url, L"version.txt");
     UpdateInfo *info = calloc(1, sizeof(UpdateInfo));
     if (!info) return 0;
-    BOOL found = FALSE, reached = FALSE;
-    if (fetch(url, &data, &size, FALSE, why, 200)) {
+    BOOL found = FALSE, reached = FALSE, got = FALSE;
+    for (int n = 0; n < 2 && !got; n++) { /* main address, then the backup */
+        base_url_n(n, url, 2048);
+        wcscat(url, L"version.txt");
+        if (fetch(url, &data, &size, FALSE, why, 200)) { got = TRUE; g_baseIndex = n; }
+    }
+    if (got) {
         reached = TRUE;
         char *text = malloc(size + 1);
         if (text) {

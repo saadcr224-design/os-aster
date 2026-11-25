@@ -1,4 +1,4 @@
-version=1.1.4
+version=1.1.5
 file=VISION-Setup.exe
-sha256=040538596a395667764e27325d18058ae1c87a55b9ec693466e7d6f3cd05586c
-notes=Updates now install by themselves.
+sha256=d01693ee98aa6ec79042684b37e250795bf724414407a313edcb0aba6c959e81
+notes=Updates now come straight from the public project files.

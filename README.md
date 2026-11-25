@@ -231,8 +231,8 @@ on.
 
 To publish an update: raise `VISION_VERSION` and `VISION_VERSION_RC` in
 `windows/openseat/version.h`, run `windows/release.sh "what is new"`, and
-push. The update address only works once the website is public (GitHub
-Pages); a company can point VISION elsewhere with the registry value
+push. VISION reads its updates from this public repository's files
+(raw.githubusercontent.com), with the website as a backup; a company can point VISION elsewhere with the registry value
 `HKEY_CURRENT_USER\Software\VISION\UpdateUrl`.
 
 ### The PC's desktop on every screen
