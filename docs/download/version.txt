@@ -1,4 +1,4 @@
-version=1.1.2
+version=1.1.3
 file=VISION-Setup.exe
-sha256=86e1626dd8bea733ffd17f15574c3b354eb8dd336dc227fdeb239452ff7b02e2
-notes=New Check for updates button; available updates blink.
+sha256=bf4bae1bf35b61a7bd9448e35e9e01ff5f517ec407cb51c290449f1946bfa6a6
+notes=First start: one question sets up a workplace for every screen.

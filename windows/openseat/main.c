@@ -57,6 +57,7 @@ enum { UP_NONE, UP_FOUND, UP_DOWNLOADING, UP_INSTALLING, UP_FAILED };
 static int g_update, g_updatePct;
 static BOOL g_updateBlink, g_checkingByHand;
 static void update_button(void);
+#define WM_FIRST_RUN (WM_APP + 60)
 static WCHAR g_updateWhy[200];
 static RECT g_rcNote;                      /* show the green "Setup saved successfully" message */
 /* Automatic setup: which workplace is being asked for which device. */
@@ -1554,8 +1555,10 @@ static LRESULT CALLBACK wnd_proc(HWND wnd, UINT msg, WPARAM wp, LPARAM lp)
         {
             WCHAR path[MAX_PATH];
             setup_file(g_demo ? L"demo-setup.ini" : L"setup.ini", path, MAX_PATH);
-            int changes = GetFileAttributesW(path) == INVALID_FILE_ATTRIBUTES ? one_workplace_per_screen()
-                                                                              : separate_shared_screens();
+            BOOL firstRun = GetFileAttributesW(path) == INVALID_FILE_ATTRIBUTES;
+            int changes = firstRun ? one_workplace_per_screen() : separate_shared_screens();
+            /* First time with several screens: offer to set everything up in one go. */
+            if (firstRun && !g_demo && g_screenCount >= 2) PostMessageW(wnd, WM_FIRST_RUN, 0, 0);
             if (changes) {
                 g_dirty = TRUE;
                 _snwprintf(g_status, 300, L"Each screen has its own workplace. Press Save setup to keep this.");
@@ -1740,6 +1743,18 @@ static LRESULT CALLBACK wnd_proc(HWND wnd, UINT msg, WPARAM wp, LPARAM lp)
          * several of these in a row, so wait a moment and look once. */
         if (msg == WM_DISPLAYCHANGE || wp == DBT_DEVNODES_CHANGED) SetTimer(wnd, 3, 900, NULL);
         break;
+    case WM_FIRST_RUN: {
+        WCHAR q[400];
+        _snwprintf(q, 400,
+                   L"VISION found %d screens.\n\n"
+                   L"Set up a workplace for every screen now? Each screen gets the PC's desktop icons and files, and "
+                   L"you press a key and click on each screen to give it its own keyboard and mouse. The workplaces "
+                   L"start straight away and every time Windows starts.",
+                   g_screenCount);
+        if (MessageBoxW(wnd, q, L"Welcome to VISION", MB_YESNO | MB_ICONQUESTION) == IDYES) wizard_start();
+        else set_status(L"You can set the workplaces up at any time with Automatic setup.");
+        return 0;
+    }
     case WM_UPDATE_FOUND:
         g_checkingByHand = FALSE;
         if (g_update == UP_NONE || g_update == UP_FAILED) {

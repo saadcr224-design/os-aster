@@ -183,7 +183,9 @@ back up first. See `windows/server-usb/README.txt`.
 
 ### How to use it
 
-**Quickest way:** press **Automatic setup** (top right). VISION gives every
+**Quickest way:** the first time VISION opens and finds two or more screens, it
+asks whether to set up every screen; answer **Yes**. Later, press **Automatic
+setup** (top right). VISION gives every
 screen its own workplace, then each screen in turn asks its person to press a
 key and click their mouse (Esc skips a step). VISION assigns them, saves and
 starts the workplaces. The steps below do the same by hand.
